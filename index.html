@@ -144,7 +144,7 @@
     padding: 8px 10px; background: rgba(0,0,0,.85); color: #fff; border-radius: 8px; display:none;
   }
 
-  /* Animation preload overlay + canvas player */
+  /* Animation preload overlay + GIF player */
   .preload-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.75);
     display: none; align-items: center; justify-content: center; flex-direction: column;
@@ -154,9 +154,22 @@
   .preload-box {
     background: #0e1630; border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 300px; text-align: center;
   }
-  #animCanvas {
-    position: absolute; inset: 0; margin: auto; pointer-events: none;
-    z-index: 5000; /* above map, below learn modal */
+  #animGif {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    max-width: 100%;
+    max-height: 100%;
+    pointer-events: none;
+    z-index: 5000; /* above map, below modal */
+    display:none;
+  }
+  #animGifClose {
+    display:none;
+    position:absolute;
+    right:12px;
+    top:12px;
+    z-index:5001;
   }
 
   /* Mobile */
@@ -249,7 +262,7 @@
 
     <!-- Animate -->
     <section id="tab-animate" class="tab-content">
-      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>. Use <b>Prebuild</b> for smooth playback and GIF export.</p>
+      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>. This version <b>builds a GIF</b> and displays it with a loading screen.</p>
       <div class="form">
         <div class="row">
           <label for="animFilter">Find mode</label>
@@ -282,8 +295,6 @@
           <button class="btn" id="animPrebuild">Prebuild</button>
           <button class="btn primary" id="animPlay">Play</button>
           <button class="btn" id="animPause">Pause</button>
-          <button class="btn ghost" id="animStepBack">← Step</button>
-          <button class="btn ghost" id="animStepFwd">Step →</button>
           <button class="btn" id="animDownloadGIF" disabled>Download GIF</button>
         </div>
         <div class="row">
@@ -310,8 +321,9 @@
 
   <!-- Map -->
   <main id="map">
-    <!-- Canvas player for prebuilt animation -->
-    <canvas id="animCanvas"></canvas>
+    <!-- GIF player overlay -->
+    <img id="animGif" alt="Animation" />
+    <button id="animGifClose" class="btn ghost">Close GIF</button>
   </main>
 </div>
 
@@ -537,7 +549,7 @@ function buildWMS(layerId, dateISO){
   return L.tileLayer.wms(GIBS_WMS, {
     layers: layerId, format:'image/png',
     transparent:true, version:'1.3.0',
-    time: dateISO || todayISO, crossOrigin:'anonymous'
+    time: dateISO || todayISO, crossOrigin:'anonymous', updateWhenIdle: true
   });
 }
 function legendURL(layerId){
@@ -575,6 +587,7 @@ function renderStack(){
     const btnVis = document.createElement('button'); btnVis.className='icon-btn'; btnVis.textContent = item.visible?'Hide':'Show';
     btnVis.onclick = ()=>{ item.visible = !item.visible; if (item.visible) item.layer.addTo(map); else map.removeLayer(item.layer); renderStack(); };
     const btnLegend = document.createElement('a'); btnLegend.className='icon-btn'; btnLegend.textContent='Legend'; btnLegend.href=legendURL(item.id); btnLegend.target='_blank';
+    btnLegend.addEventListener('click', ()=> setTimeout(()=>showToast('If the legend is blank, this layer may not provide one.'), 120));
     const btnDel = document.createElement('button'); btnDel.className='icon-btn danger'; btnDel.textContent='Remove';
     btnDel.onclick = ()=>{ map.removeLayer(item.layer); stackState.splice(idx,1); renderStack(); };
 
@@ -648,12 +661,40 @@ function syncCompareAnimateSelects(){
   $('#animStart').value = defaultDateISO; $('#animEnd').value = defaultDateISO;
 }
 
-/* ==========================
-   Animate (A) — simple live mode (unchanged behavior)
-   ========================== */
-let animTimer=null, animFrames=[], animIndex=0, animForward=true, animLayer=null;
+/* Disable Compare when switching tabs (prevents odd layering) */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    $('#'+btn.dataset.tab).classList.add('active');
 
-function buildFrames(startISO, endISO, step, units){
+    if (sbs) { map.removeControl(sbs); sbs = null; }
+    if (leftL)  { map.removeLayer(leftL);  leftL  = null; }
+    if (rightL) { map.removeLayer(rightL); rightL = null; }
+  });
+});
+
+/* ==========================
+   Animate — build GIF, show with loader
+   ========================== */
+const preloadOverlay = $('#preloadOverlay');
+const preloadText = $('#preloadText');
+const preloadProgress = $('#preloadProgress');
+const animGif = $('#animGif');
+const animGifClose = $('#animGifClose');
+
+function showLoader(msg, p = 0) {
+  preloadOverlay.classList.add('open');
+  preloadText.textContent = msg;
+  preloadProgress.value = p;
+}
+function hideLoader() {
+  preloadOverlay.classList.remove('open');
+}
+
+/* Build frame date list (supports sub-daily if product allows) */
+function buildFramesISO(startISO, endISO, step, units) {
   const frames=[];
   let cur = new Date(startISO);
   const end = new Date(endISO);
@@ -664,76 +705,15 @@ function buildFrames(startISO, endISO, step, units){
     else if (units==='minutes') d.setUTCMinutes(d.getUTCMinutes()+step);
     else if (units==='seconds') d.setUTCSeconds(d.getUTCSeconds()+step);
   };
-  while (cur <= end){
-    frames.push(cur.toISOString().slice(0,10)); // most GIBS layers are daily
+  while (cur <= end) {
+    frames.push(cur.toISOString().slice(0,10));
     add(cur, step, units);
   }
   return frames.length ? frames : [startISO];
 }
-function ensureAnimLayer(){
-  const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
-  if (animLayer){ map.removeLayer(animLayer); animLayer=null; }
-  animLayer = buildWMS(layerId, $('#animStart').value || defaultDateISO).addTo(map);
-  animLayer.bringToFront(); overlays.bringToFront(); drawnItems.bringToFront();
-}
-function applyFrame(i){
-  animIndex = i;
-  const t = animFrames[animIndex];
-  if (animLayer) { animLayer.setParams({time: t}); animLayer.bringToFront(); }
-  $('#animCurrent').textContent = t;
-  $('#animProgress').value = Math.round(100 * (animIndex+1) / animFrames.length);
-}
-function play(){
-  if (!animFrames.length){ showToast('Set start/end and press Play'); return; }
-  if (!animLayer) ensureAnimLayer();
-  clearInterval(animTimer);
-  const delay = Math.max(50, parseInt($('#animSpeed').value||'500',10));
-  animTimer = setInterval(()=>{
-    if (animForward) animIndex++; else animIndex--;
-    if (animIndex >= animFrames.length || animIndex < 0){
-      if ($('#animPingPong').checked){
-        animForward = !animForward;
-        animIndex = Math.max(0, Math.min(animFrames.length-1, animIndex));
-      } else if ($('#animLoop').checked){
-        animIndex = animForward ? 0 : animFrames.length-1;
-      } else {
-        pause(); return;
-      }
-    }
-    applyFrame(animIndex);
-  }, delay);
-}
-function pause(){ clearInterval(animTimer); animTimer=null; }
 
-$('#animPlay').addEventListener('click', ()=>{
-  const start = $('#animStart').value || defaultDateISO;
-  const end   = $('#animEnd').value   || defaultDateISO;
-  const step  = Math.max(1, parseInt($('#animStep').value||'1',10));
-  const units = $('#animUnits').value;
-  animFrames = buildFrames(start, end, step, units);
-  animIndex = 0; animForward = true;
-  ensureAnimLayer();
-  applyFrame(animIndex);
-  play();
-});
-$('#animPause').addEventListener('click', pause);
-$('#animStepFwd').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
-$('#animStepBack').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
-
-/* ==========================
-   Animate (B) — PREBUILD smooth animation + GIF
-   ========================== */
-const preloadOverlay = $('#preloadOverlay');
-const preloadText = $('#preloadText');
-const preloadProgress = $('#preloadProgress');
-const animCanvas = $('#animCanvas');
-let prebuiltFrames = []; // Image objects
-let prebuiltDelays = 500; // ms
-let prebuiltPlaying = false;
-let prebuiltTimer = null;
-
+/* Build a single-image WMS request for current view (EPSG:3857) */
 function wmsGetMapURL(layerId, isoDate, size, bounds){
-  // Build a single-image WMS request for the current view (EPSG:3857)
   const crs = 'EPSG:3857';
   const w = size.x, h = size.y;
   const proj = map.options.crs;
@@ -743,7 +723,7 @@ function wmsGetMapURL(layerId, isoDate, size, bounds){
   const params = [
     'SERVICE=WMS','VERSION=1.3.0','REQUEST=GetMap',
     `LAYERS=${encodeURIComponent(layerId)}`,
-    'FORMAT=image/jpeg', // opaque = faster/smaller
+    'FORMAT=image/jpeg',
     'TRANSPARENT=false',
     `CRS=${crs}`,
     `BBOX=${bbox}`,
@@ -754,157 +734,225 @@ function wmsGetMapURL(layerId, isoDate, size, bounds){
   return GIBS_WMS + params;
 }
 
-async function prebuildAnimation(){
-  const layerId = $('#animLayer').value;
-  const start = $('#animStart').value || defaultDateISO;
-  const end   = $('#animEnd').value   || defaultDateISO;
-  const step  = Math.max(1, parseInt($('#animStep').value||'1',10));
-  const units = $('#animUnits').value;
-  prebuiltDelays = Math.max(50, parseInt($('#animSpeed').value||'500',10));
-  const framesISO = buildFrames(start, end, step, units);
-  if (!framesISO.length){ showToast('No frames to build'); return; }
-
-  // Prepare canvas to map size
+/* Fetch image for current viewport/date */
+function fetchWmsImageForView(layerId, isoDate) {
   const size = map.getSize();
-  animCanvas.width = size.x;
-  animCanvas.height = size.y;
-
-  prebuiltFrames = [];
-  preloadOverlay.classList.add('open');
-  preloadText.textContent = 'Preparing frames…';
-  preloadProgress.value = 0;
-
-  // Load sequentially (less stress on network/CDN) with progress
   const bounds = map.getBounds();
-  for (let i=0;i<framesISO.length;i++){
-    preloadText.textContent = `Fetching ${i+1} / ${framesISO.length} (${framesISO[i]})`;
-    const url = wmsGetMapURL(layerId, framesISO[i], size, bounds);
-    try{
-      const img = await loadImage(url);
-      prebuiltFrames.push(img);
-    }catch(e){
-      // Push a blank frame to keep timing consistent
-      const blank = document.createElement('canvas'); blank.width=size.x; blank.height=size.y;
-      prebuiltFrames.push(blank);
-    }
-    preloadProgress.value = Math.round((i+1)*100/framesISO.length);
-  }
-  preloadOverlay.classList.remove('open');
-  $('#animDownloadGIF').disabled = prebuiltFrames.length === 0;
-  showToast(`Prebuilt ${prebuiltFrames.length} frame(s)`);
-}
-
-function loadImage(src){
-  return new Promise((resolve, reject)=>{
+  const url = wmsGetMapURL(layerId, isoDate, size, bounds);
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = ()=>resolve(img);
+    img.onload = () => resolve(img);
     img.onerror = reject;
-    img.src = src;
+    img.src = url;
   });
 }
 
-function drawFrameToCanvas(img){
-  const ctx = animCanvas.getContext('2d');
-  ctx.clearRect(0,0,animCanvas.width, animCanvas.height);
-  ctx.drawImage(img, 0, 0, animCanvas.width, animCanvas.height);
-}
+/* Build frames, optional ping-pong, then encode GIF; returns ObjectURL */
+async function buildGifForCurrentView({ layerId, startISO, endISO, step, units, speedMs, loop, pingpong }) {
+  // 1) Build date frames
+  let framesISO = buildFramesISO(startISO, endISO, step, units);
+  if (pingpong && framesISO.length > 1) {
+    const back = framesISO.slice(1, -1).reverse(); // avoid duplicating endpoints
+    framesISO = framesISO.concat(back);
+  }
+  if (!framesISO.length) throw new Error('No frames to build');
 
-function playPrebuilt(){
-  if (!prebuiltFrames.length){ showToast('Prebuild first'); return; }
-  if (prebuiltPlaying) return;
-  prebuiltPlaying = true;
-  let idx = 0, forward = true;
-  drawFrameToCanvas(prebuiltFrames[0]);
-  prebuiltTimer = setInterval(()=>{
-    idx += forward ? 1 : -1;
-    if (idx >= prebuiltFrames.length || idx < 0){
-      if ($('#animPingPong').checked){
-        forward = !forward;
-        idx = Math.max(0, Math.min(prebuiltFrames.length-1, idx));
-      } else if ($('#animLoop').checked){
-        idx = forward ? 0 : prebuiltFrames.length-1;
-      } else {
-        pausePrebuilt(); return;
-      }
+  // 2) Fetch images (Phase A)
+  const imgs = [];
+  showLoader(`Fetching 0 / ${framesISO.length} frames…`, 0);
+  for (let i = 0; i < framesISO.length; i++) {
+    showLoader(`Fetching ${i+1} / ${framesISO.length} (${framesISO[i]})`, Math.round((i+1)*100/framesISO.length));
+    try {
+      const img = await fetchWmsImageForView(layerId, framesISO[i]);
+      imgs.push(img);
+    } catch (e) {
+      const size = map.getSize();
+      const blank = document.createElement('canvas');
+      blank.width = size.x; blank.height = size.y;
+      imgs.push(blank);
     }
-    drawFrameToCanvas(prebuiltFrames[idx]);
-  }, prebuiltDelays);
-}
-function pausePrebuilt(){
-  prebuiltPlaying = false;
-  clearInterval(prebuiltTimer);
-  prebuiltTimer = null;
-}
+    $('#animCurrent').textContent = framesISO[i];
+    $('#animProgress').value = Math.round((i+1)*100/framesISO.length);
+  }
 
-async function downloadGIF(){
-  if (!prebuiltFrames.length){ showToast('Prebuild first'); return; }
+  // 3) Encode GIF (Phase B)
+  const repeat = loop ? 0 : -1; // 0 loops forever, -1 no loop
   const gif = new GIF({
     workers: 2,
     quality: 10,
-    workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.worker.js'
+    workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.worker.js',
+    repeat: repeat
   });
+
+  const size = map.getSize();
   const off = document.createElement('canvas');
-  off.width = animCanvas.width; off.height = animCanvas.height;
+  off.width = size.x; off.height = size.y;
   const ctx = off.getContext('2d');
 
-  for (const img of prebuiltFrames){
-    ctx.clearRect(0,0,off.width, off.height);
+  imgs.forEach(img => {
+    ctx.clearRect(0, 0, off.width, off.height);
     ctx.drawImage(img, 0, 0, off.width, off.height);
-    gif.addFrame(off, {copy:true, delay: prebuiltDelays});
-  }
-  preloadOverlay.classList.add('open');
-  preloadText.textContent = 'Encoding GIF… this may take a moment';
-  preloadProgress.value = 0;
-
-  gif.on('progress', p => { preloadProgress.value = Math.round(p*100); });
-  gif.on('finished', (blob)=>{
-    preloadOverlay.classList.remove('open');
-    const url = URL.createObjectURL(blob);
-    const a = Object.assign(document.createElement('a'), {href:url, download:`animation_${new Date().toISOString().slice(0,10)}.gif`});
-    a.click(); setTimeout(()=>URL.revokeObjectURL(url), 5000);
+    gif.addFrame(off, { copy: true, delay: Math.max(50, speedMs) });
   });
-  gif.render();
+
+  return new Promise((resolve, reject) => {
+    showLoader('Encoding GIF…', 0);
+    gif.on('progress', p => showLoader('Encoding GIF…', Math.round(p * 100)));
+    gif.on('finished', blob => {
+      hideLoader();
+      const url = URL.createObjectURL(blob);
+      resolve(url);
+    });
+    gif.on('abort', () => { hideLoader(); reject(new Error('GIF encoding aborted')); });
+    gif.on('error', err => { hideLoader(); reject(err); });
+    gif.render();
+  });
 }
 
-/* Hook up Prebuild/GIF controls */
-$('#animPrebuild').addEventListener('click', prebuildAnimation);
-$('#animDownloadGIF').addEventListener('click', downloadGIF);
+/* Show/hide the GIF overlay */
+let currentGifURL = null;
+function showGif(url) {
+  if (currentGifURL) URL.revokeObjectURL(currentGifURL);
+  currentGifURL = url;
+  animGif.src = url;
+  animGif.style.display = 'block';
+  animGifClose.style.display = 'block';
+}
+function hideGif() {
+  animGif.style.display = 'none';
+  animGif.src = '';
+  animGifClose.style.display = 'none';
+  if (currentGifURL) { URL.revokeObjectURL(currentGifURL); currentGifURL = null; }
+}
+animGifClose.addEventListener('click', hideGif);
 
-/* Canvas visibility during prebuilt playback */
-document.addEventListener('keydown', (e)=>{
-  if (document.querySelector('.tab-btn.active')?.dataset.tab !== 'tab-animate') return;
-  if (e.code==='Space'){
-    e.preventDefault();
-    if (prebuiltPlaying) pausePrebuilt(); else playPrebuilt();
+/* Animate controls: Play/Prebuild/Pause/Download */
+$('#animPlay').addEventListener('click', async () => {
+  hideGif(); // stop any previous GIF
+  const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+  const startISO = $('#animStart').value || defaultDateISO;
+  const endISO   = $('#animEnd').value   || defaultDateISO;
+  const step     = Math.max(1, parseInt($('#animStep').value || '1', 10));
+  const units    = $('#animUnits').value;
+  const speedMs  = Math.max(50, parseInt($('#animSpeed').value || '500', 10));
+  const loop     = $('#animLoop').checked;
+  const pingpong = $('#animPingPong').checked;
+
+  try {
+    showLoader('Preparing frames…', 0);
+    const url = await buildGifForCurrentView({ layerId, startISO, endISO, step, units, speedMs, loop, pingpong });
+    hideLoader();
+    showGif(url);
+    showToast('Animation ready.');
+    $('#animDownloadGIF').disabled = false;
+    $('#animDownloadGIF').dataset.gifUrl = url;
+  } catch (e) {
+    hideLoader();
+    console.warn(e);
+    showToast('Failed to build animation.');
   }
 });
-$('#animPlay').addEventListener('click', ()=>{ /* live mode already handled above */ });
-$('#animPause').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
-$('#animStepFwd').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
-$('#animStepBack').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
+
+$('#animPrebuild').addEventListener('click', async () => {
+  hideGif();
+  const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+  const startISO = $('#animStart').value || defaultDateISO;
+  const endISO   = $('#animEnd').value   || defaultDateISO;
+  const step     = Math.max(1, parseInt($('#animStep').value || '1', 10));
+  const units    = $('#animUnits').value;
+  const speedMs  = Math.max(50, parseInt($('#animSpeed').value || '500', 10));
+  const loop     = $('#animLoop').checked;
+  const pingpong = $('#animPingPong').checked;
+
+  try {
+    showLoader('Preparing frames…', 0);
+    const url = await buildGifForCurrentView({ layerId, startISO, endISO, step, units, speedMs, loop, pingpong });
+    hideLoader();
+    $('#animDownloadGIF').disabled = false;
+    $('#animDownloadGIF').dataset.gifUrl = url;
+    showToast('GIF prebuilt. Press Play to display or Download GIF.');
+  } catch (e) {
+    hideLoader();
+    console.warn(e);
+    showToast('Failed to prebuild GIF.');
+  }
+});
+
+$('#animPause').addEventListener('click', hideGif);
+
+$('#animDownloadGIF').addEventListener('click', () => {
+  const url = $('#animDownloadGIF').dataset.gifUrl;
+  if (!url) { showToast('No GIF to download. Press Play first.'); return; }
+  const a = Object.assign(document.createElement('a'), {
+    href: url,
+    download: `animation_${new Date().toISOString().slice(0,10)}.gif`
+  });
+  a.click();
+});
+
+/* Animate: wire the “Find mode” search to filter the layer select */
+function filterSelectOptions(selectEl, query) {
+  const q = (query || '').trim().toLowerCase();
+  const tmp = document.createElement('select');
+
+  const addGroup = (label, items) => {
+    if (!items.length) return;
+    const og = document.createElement('optgroup'); og.label = label;
+    items.forEach(it => {
+      const o = document.createElement('option');
+      o.value = it.name; o.textContent = it.title;
+      og.appendChild(o);
+    });
+    tmp.appendChild(og);
+  };
+
+  const matches = (it) => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q);
+
+  const pop = popularList.filter(matches);
+  addGroup('Popular', pop);
+
+  let currentGroup = null;
+  catalogList
+    .filter(it => !popularList.some(p => p.name === it.name))
+    .filter(matches)
+    .forEach(it => {
+      if (it.group !== currentGroup) {
+        const og = document.createElement('optgroup'); og.label = it.group;
+        tmp.appendChild(og); currentGroup = it.group;
+      }
+      const o = document.createElement('option');
+      o.value = it.name; o.textContent = it.title;
+      tmp.lastChild.appendChild(o);
+    });
+
+  if (tmp.children.length) selectEl.innerHTML = tmp.innerHTML;
+}
+$('#animFilter').addEventListener('input', () => {
+  filterSelectOptions($('#animLayer'), $('#animFilter').value);
+});
 
 /* ==========================
-   Learn Drawer + Modal (now guaranteed above map)
+   Learn Drawer + Modal (stacking guards)
    ========================== */
 const LEARN_HTML = `
 <div class="learn-section" id="sec-sat">
   <h4>Satellites</h4>
   <ul>
-    <li><b>VIIRS (SNPP / NOAA-20)</b> — ~375 m visible; daily global; great for smoke, storms, wildfires.</li>
-    <li><b>MODIS (Terra/Aqua)</b> — 250–1000 m; long time series since 2000; historic comparisons.</li>
+    <li><b>VIIRS (SNPP / NOAA-20)</b> — ~375 m visible; daily global; good for smoke, storms, wildfires.</li>
+    <li><b>MODIS (Terra/Aqua)</b> — 250–1000 m; time series since 2000; historic comparisons.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-families">
   <h4>Layer Families</h4>
   <ul>
     <li><b>True Color</b>: photo-like; clouds, dust, fires (via smoke).</li>
-    <li><b>Infrared (IR)</b>: thermal; night/day; cloud-top temp, hot spots.</li>
+    <li><b>Infrared (IR)</b>: thermal; night/day; cloud-top temperature.</li>
     <li><b>Fires/Hotspots</b>: active fire detections.</li>
     <li><b>Snow & Ice</b>: snow cover, sea ice concentration/extent.</li>
     <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone.</li>
-    <li><b>Night Lights</b>: nighttime lights (DNB).</li>
-    <li><b>Ocean/SST/Color</b>: SST, chlorophyll.</li>
+    <li><b>Night Lights</b>: nighttime light intensity (DNB).</li>
+    <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tools">
@@ -912,16 +960,16 @@ const LEARN_HTML = `
   <ul>
     <li><b>Explore</b>: build a multi-layer view; per-layer date/opacity; reorder layers.</li>
     <li><b>Compare</b>: swipe left/right dates/layers to see change.</li>
-    <li><b>Animate</b>: live (quick) or prebuilt (smooth/GIF).</li>
+    <li><b>Animate</b>: build GIF for smooth playback and export.</li>
     <li><b>Analyze</b>: draw AOIs; export/import GeoJSON; snapshot.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tips">
   <h4>Tips & Caveats</h4>
   <ul>
-    <li>Some products are daily only; sub-daily steps may repeat frames.</li>
-    <li>Prebuild uses current viewport; zoom/pan before building.</li>
-    <li>Stacks: True Color base + themed overlays for clarity.</li>
+    <li>Many products are daily; sub-daily steps may repeat frames.</li>
+    <li>GIF uses the current viewport; pan/zoom before building.</li>
+    <li>Stacks: True Color base + overlays for clarity.</li>
   </ul>
 </div>
 `;
@@ -940,85 +988,21 @@ function toggleLearn(open){
 }
 $('#openLearn').addEventListener('click', ()=>toggleLearn());
 $('#closeLearn').addEventListener('click', ()=>toggleLearn(false));
-document.addEventListener('keydown', (e)=>{ if (e.key==='?' && !e.ctrlKey && !e.metaKey) toggleLearn(); if (e.key==='Escape') toggleLearn(false); });
 
-$('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'));
-$('#closeLearnModal').addEventListener('click', ()=>$('#learnModal').classList.remove('open'));
-$('#learnModal').addEventListener('click', (e)=>{ if (e.target.id==='learnModal') $('#learnModal').classList.remove('open'); });
-
-$('#learnSearch').addEventListener('input', ()=>{
-  const q = $('#learnSearch').value.toLowerCase();
-  document.querySelectorAll('.learn-section').forEach(sec=>{
-    sec.style.display = sec.textContent.toLowerCase().includes(q) ? '' : 'none';
-  });
-});
-if (localStorage.getItem('learnOpen')==='1') toggleLearn(true);
-
-/* ==========================
-   Analyze / Export / Snapshot
-   ========================== */
-$('#exportGeoJSON').addEventListener('click', ()=>{
-  const fc = drawnItems.toGeoJSON();
-  const blob = new Blob([JSON.stringify(fc, null, 2)], {type:'application/geo+json'});
-  const a = Object.assign(document.createElement('a'), {href:URL.createObjectURL(blob), download:'aoi.geojson'}); a.click();
-  URL.revokeObjectURL(a.href);
-});
-$('#importGeoJSON').addEventListener('change', async (ev)=>{
-  const f = ev.target.files?.[0]; if (!f) return;
-  try { const txt=await f.text(); L.geoJSON(JSON.parse(txt)).eachLayer(l=>drawnItems.addLayer(l)); $('#aoiStatus').textContent='AOI imported'; }
-  catch { $('#aoiStatus').textContent='Invalid GeoJSON'; }
-  ev.target.value='';
-});
-function snapshot(){
-  domtoimage.toPng($('#map')).then(url=>{
-    const a = Object.assign(document.createElement('a'), {href:url, download:`map_${new Date().toISOString().slice(0,10)}.png`}); a.click();
-  });
-}
-$('#snapshotBtn').addEventListener('click', snapshot);
-$('#snapshotBtn2').addEventListener('click', snapshot);
-
-/* ==========================
-   Bookmarks
-   ========================== */
-const BM_KEY='oeo_bookmarks_v3';
-function loadBMs(){
-  const arr = JSON.parse(localStorage.getItem(BM_KEY) || '[]');
-  const sel = $('#bookmarkLoad'); sel.innerHTML='<option value="">Load…</option>';
-  arr.forEach((b,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=b.name; sel.appendChild(o); });
-  return arr;
-}
-function saveBM(){
-  const arr=loadBMs();
-  const name = prompt('Bookmark name?', `View ${arr.length+1}`) || `View ${arr.length+1}`;
-  arr.push({ name, center: map.getCenter(), zoom: map.getZoom(), tab: document.querySelector('.tab-btn.active')?.dataset.tab || 'tab-explore' });
-  localStorage.setItem(BM_KEY, JSON.stringify(arr)); loadBMs();
-}
-$('#bookmarkSave').addEventListener('click', saveBM);
-$('#bookmarkLoad').addEventListener('change', ()=>{
-  const arr=loadBMs(); const i=parseInt($('#bookmarkLoad').value,10);
-  if (!isNaN(i) && arr[i]){ const b=arr[i]; map.setView(b.center,b.zoom); if (b.tab){ document.querySelector(`.tab-btn[data-tab="${b.tab}"]`)?.click(); } }
-  $('#bookmarkLoad').value='';
-});
-loadBMs();
-
-/* ==========================
-   Tabs
-   ========================== */
-document.querySelectorAll('.tab-btn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(p=>p.classList.remove('active'));
-    btn.classList.add('active');
-    $('#'+btn.dataset.tab).classList.add('active');
-  });
+document.addEventListener('keydown', (e) => {
+  const ae = document.activeElement;
+  const isTyping = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+  const isQuestionMark = (e.key === '?' || (e.shiftKey && e.key === '/'));
+  if (!isTyping && isQuestionMark) {
+    e.preventDefault();
+    const modalOpen = $('#learnModal').classList.contains('open');
+    if (modalOpen) {
+      $('#learnModal').classList.remove('open');
+    } else {
+      toggleLearn();
+    }
+  }
+  if (e.key === 'Escape') toggleLearn(false);
 });
 
-/* ==========================
-   Init
-   ========================== */
-populateCatalog();
-
-/* ============== END ============== */
-</script>
-</body>
-</html>
+$('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'))
