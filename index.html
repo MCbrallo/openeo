@@ -102,13 +102,19 @@
   .legend { background:#0f1730; border:1px solid var(--line); border-radius:8px; padding:8px; text-align:center; }
   .legend img { max-width:100%; height:auto; }
 
-  /* Learn Drawer & Modal — force above everything (even Leaflet panes) */
+  /* Ensure Leaflet panes/controls are below overlays */
+  .leaflet-pane,
+  .leaflet-control-container {
+    z-index: 0;
+  }
+
+  /* Learn Drawer & Modal — force above everything */
   .learn-toggle { margin-left: 6px; }
   .learn-drawer {
     position: fixed; right: 12px; top: 64px; bottom: 12px; width: 380px; max-width: 94vw;
     background: rgba(17,23,43,.98); backdrop-filter: blur(6px);
     border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.3);
-    display: none; z-index: 2000000000; padding: 12px; overflow:auto;
+    display: none; z-index: 2000000000 !important; padding: 12px; overflow:auto;
   }
   .learn-drawer.open { display:block; }
   .learn-drawer h3 { margin: 6px 0; }
@@ -118,7 +124,7 @@
   .kbd { background:#0c1636; border:1px solid #263b80; padding:1px 6px; border-radius:6px; font-size:12px; }
 
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center;
-           z-index: 2147483647; } /* max 32-bit int to beat any map pane */
+           z-index: 2147483647 !important; }
   .modal.open { display:flex; }
   .modal .modal-body {
     width: min(900px, 95vw); max-height: 90vh; overflow:auto;
@@ -175,7 +181,7 @@
 <div class="app">
   <header>
     <div class="title">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a 8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
       <h1>Open EO Viewer</h1>
       <span class="muted">Explore • Compare • Animate • Analyze</span>
       <button class="btn icon learn-toggle" id="openLearn">?</button>
@@ -243,6 +249,7 @@
         </div>
         <div class="row">
           <button class="btn primary" id="activateCompare">Activate Compare</button>
+          <button class="btn" id="deactivateCompare">Deactivate Compare</button>
         </div>
       </div>
     </section>
@@ -625,19 +632,51 @@ $('#toggleOSM').addEventListener('change', e=>{
 });
 
 /* ==========================
-   Compare (Side-by-side)
+   Compare (Side-by-side) — with deactivate & stack/canvas management
    ========================== */
 let leftL=null, rightL=null, sbs=null;
+
+function hideStackDuringCompare() {
+  // hide all visible stack layers
+  stackState.forEach(s => { if (s.visible) map.removeLayer(s.layer); });
+  // hide animation canvas while comparing
+  document.getElementById('animCanvas').style.display = 'none';
+}
+
+function restoreStackAfterCompare() {
+  // restore visible stack layers
+  stackState.forEach(s => { if (s.visible) s.layer.addTo(map); s.layer.setOpacity(s.opacity); });
+  // show animation canvas back
+  document.getElementById('animCanvas').style.display = '';
+}
+
 function activateCompare(){
   if (sbs){ map.removeControl(sbs); sbs=null; }
   if (leftL) map.removeLayer(leftL);
   if (rightL) map.removeLayer(rightL);
+
+  hideStackDuringCompare();
+
   leftL  = buildWMS($('#leftLayer').value,  $('#leftDate').value).addTo(map);
   rightL = buildWMS($('#rightLayer').value, $('#rightDate').value).addTo(map);
   sbs = L.control.sideBySide(leftL, rightL).addTo(map);
   overlays.bringToFront(); drawnItems.bringToFront();
 }
+function deactivateCompare(){
+  if (sbs){ map.removeControl(sbs); sbs=null; }
+  if (leftL){ map.removeLayer(leftL); leftL=null; }
+  if (rightL){ map.removeLayer(rightL); rightL=null; }
+  restoreStackAfterCompare();
+}
 $('#activateCompare').addEventListener('click', activateCompare);
+$('#deactivateCompare').addEventListener('click', deactivateCompare);
+
+// Auto-deactivate when switching tabs away from Compare
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    if (btn.dataset.tab !== 'tab-compare') deactivateCompare();
+  });
+});
 
 /* Populate compare & animate selects once catalog ready */
 function syncCompareAnimateSelects(){
@@ -649,7 +688,7 @@ function syncCompareAnimateSelects(){
 }
 
 /* ==========================
-   Animate (A) — simple live mode (unchanged behavior)
+   Animate (A) — live tile mode (quick, may load during playback)
    ========================== */
 let animTimer=null, animFrames=[], animIndex=0, animForward=true, animLayer=null;
 
@@ -665,7 +704,7 @@ function buildFrames(startISO, endISO, step, units){
     else if (units==='seconds') d.setUTCSeconds(d.getUTCSeconds()+step);
   };
   while (cur <= end){
-    frames.push(cur.toISOString().slice(0,10)); // most GIBS layers are daily
+    frames.push(cur.toISOString().slice(0,10)); // daily for most GIBS layers
     add(cur, step, units);
   }
   return frames.length ? frames : [startISO];
@@ -686,6 +725,8 @@ function applyFrame(i){
 function play(){
   if (!animFrames.length){ showToast('Set start/end and press Play'); return; }
   if (!animLayer) ensureAnimLayer();
+  // Hide prebuilt canvas while using live mode
+  document.getElementById('animCanvas').style.display = 'none';
   clearInterval(animTimer);
   const delay = Math.max(50, parseInt($('#animSpeed').value||'500',10));
   animTimer = setInterval(()=>{
@@ -716,9 +757,9 @@ $('#animPlay').addEventListener('click', ()=>{
   applyFrame(animIndex);
   play();
 });
-$('#animPause').addEventListener('click', pause);
-$('#animStepFwd').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
-$('#animStepBack').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
+$('#animPause').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
+$('#animStepFwd').addEventListener('click', ()=>{ pause(); pausePrebuilt(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
+$('#animStepBack').addEventListener('click', ()=>{ pause(); pausePrebuilt(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
 
 /* ==========================
    Animate (B) — PREBUILD smooth animation + GIF
@@ -727,7 +768,7 @@ const preloadOverlay = $('#preloadOverlay');
 const preloadText = $('#preloadText');
 const preloadProgress = $('#preloadProgress');
 const animCanvas = $('#animCanvas');
-let prebuiltFrames = []; // Image objects
+let prebuiltFrames = []; // array of Image or Canvas
 let prebuiltDelays = 500; // ms
 let prebuiltPlaying = false;
 let prebuiltTimer = null;
@@ -761,10 +802,10 @@ async function prebuildAnimation(){
   const step  = Math.max(1, parseInt($('#animStep').value||'1',10));
   const units = $('#animUnits').value;
   prebuiltDelays = Math.max(50, parseInt($('#animSpeed').value||'500',10));
+
   const framesISO = buildFrames(start, end, step, units);
   if (!framesISO.length){ showToast('No frames to build'); return; }
 
-  // Prepare canvas to map size
   const size = map.getSize();
   animCanvas.width = size.x;
   animCanvas.height = size.y;
@@ -774,16 +815,14 @@ async function prebuildAnimation(){
   preloadText.textContent = 'Preparing frames…';
   preloadProgress.value = 0;
 
-  // Load sequentially (less stress on network/CDN) with progress
   const bounds = map.getBounds();
   for (let i=0;i<framesISO.length;i++){
     preloadText.textContent = `Fetching ${i+1} / ${framesISO.length} (${framesISO[i]})`;
     const url = wmsGetMapURL(layerId, framesISO[i], size, bounds);
     try{
-      const img = await loadImage(url);
+      const img = await fetchImageAsObjectURL(url); // safe loader (no taint)
       prebuiltFrames.push(img);
     }catch(e){
-      // Push a blank frame to keep timing consistent
       const blank = document.createElement('canvas'); blank.width=size.x; blank.height=size.y;
       prebuiltFrames.push(blank);
     }
@@ -792,15 +831,18 @@ async function prebuildAnimation(){
   preloadOverlay.classList.remove('open');
   $('#animDownloadGIF').disabled = prebuiltFrames.length === 0;
   showToast(`Prebuilt ${prebuiltFrames.length} frame(s)`);
+  // show canvas when using prebuilt playback
+  animCanvas.style.display = '';
 }
 
-function loadImage(src){
+async function fetchImageAsObjectURL(url){
+  const res = await fetch(url, { mode: 'cors' });
+  const blob = await res.blob();
   return new Promise((resolve, reject)=>{
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = ()=>resolve(img);
+    img.onload = ()=>{ URL.revokeObjectURL(img.src); resolve(img); };
     img.onerror = reject;
-    img.src = src;
+    img.src = URL.createObjectURL(blob);
   });
 }
 
@@ -812,6 +854,7 @@ function drawFrameToCanvas(img){
 
 function playPrebuilt(){
   if (!prebuiltFrames.length){ showToast('Prebuild first'); return; }
+  animCanvas.style.display = ''; // ensure visible
   if (prebuiltPlaying) return;
   prebuiltPlaying = true;
   let idx = 0, forward = true;
@@ -854,7 +897,7 @@ async function downloadGIF(){
     gif.addFrame(off, {copy:true, delay: prebuiltDelays});
   }
   preloadOverlay.classList.add('open');
-  preloadText.textContent = 'Encoding GIF… this may take a moment';
+  preloadText.textContent = 'Encoding GIF…';
   preloadProgress.value = 0;
 
   gif.on('progress', p => { preloadProgress.value = Math.round(p*100); });
@@ -871,21 +914,19 @@ async function downloadGIF(){
 $('#animPrebuild').addEventListener('click', prebuildAnimation);
 $('#animDownloadGIF').addEventListener('click', downloadGIF);
 
-/* Canvas visibility during prebuilt playback */
+/* Keyboard shortcuts for animation tab */
 document.addEventListener('keydown', (e)=>{
-  if (document.querySelector('.tab-btn.active')?.dataset.tab !== 'tab-animate') return;
-  if (e.code==='Space'){
-    e.preventDefault();
-    if (prebuiltPlaying) pausePrebuilt(); else playPrebuilt();
-  }
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (activeTab !== 'tab-animate') return;
+  if (e.code==='Space'){ e.preventDefault(); if (prebuiltPlaying) pausePrebuilt(); else playPrebuilt(); }
+  if (e.key==='ArrowRight'){ e.preventDefault(); $('#animStepFwd').click(); }
+  if (e.key==='ArrowLeft'){ e.preventDefault(); $('#animStepBack').click(); }
+  if (e.key==='Home'){ e.preventDefault(); pause(); pausePrebuilt(); applyFrame(0); }
+  if (e.key==='End'){ e.preventDefault(); pause(); pausePrebuilt(); if (animFrames.length) applyFrame(animFrames.length-1); }
 });
-$('#animPlay').addEventListener('click', ()=>{ /* live mode already handled above */ });
-$('#animPause').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
-$('#animStepFwd').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
-$('#animStepBack').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
 
 /* ==========================
-   Learn Drawer + Modal (now guaranteed above map)
+   Learn Drawer + Modal (always above map)
    ========================== */
 const LEARN_HTML = `
 <div class="learn-section" id="sec-sat">
@@ -1017,8 +1058,6 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
    Init
    ========================== */
 populateCatalog();
-
-/* ============== END ============== */
 </script>
 </body>
 </html>
