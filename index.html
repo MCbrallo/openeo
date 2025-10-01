@@ -18,7 +18,7 @@
 <script src="https://cdn.jsdelivr.net/npm/leaflet-geometryutil@0.10.3/src/leaflet.geometryutil.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@2.9.0/dist/dom-to-image-more.min.js"></script>
 
-<!-- Time & Compare (optional, already wired) -->
+<!-- Time & Compare -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.control.min.css">
 <script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-side-by-side@2.0.1/leaflet-side-by-side.min.js"></script>
@@ -30,19 +30,22 @@
     --muted: #9fb0d0;
     --text: #e6ecff;
     --accent: #65b1ff;
+    --accent-2: #8be9ff;
     --line: rgba(255,255,255,.08);
+    --danger: #ff6574;
   }
   * { box-sizing: border-box; }
   html, body { height:100%; margin:0; background:var(--bg); color:var(--text); font: 14px/1.35 Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
+
   /* Layout grid */
   .app {
     display: grid; height: 100vh; width: 100vw;
-    grid-template-columns: 320px 1fr 360px; grid-template-rows: 56px 1fr;
+    grid-template-columns: 340px 1fr; grid-template-rows: 56px 1fr;
     grid-template-areas:
-      "header header header"
-      "left   map    right";
+      "header header"
+      "left   map";
   }
   header {
     grid-area: header; display:flex; align-items:center; justify-content:space-between;
@@ -58,16 +61,18 @@
   .btn:hover { background:#223059; }
   .btn.primary { background: var(--accent); color:#07111f; border-color:transparent; }
   .btn.primary:hover { filter: brightness(1.05); }
+  .btn.ghost { background: transparent; border-color: var(--line); }
+  .btn.icon { display:flex; align-items:center; gap:6px; }
 
   /* Panels */
   .panel { background: var(--panel); border-right: 1px solid var(--line); padding: 10px; }
-  .panel.right { border-left: 1px solid var(--line); border-right: none; }
   .panel h2 { font-size: 13px; letter-spacing:.02em; margin: 8px 0 6px; color: #cfe0ff; text-transform: uppercase; }
   .panel .muted { color: var(--muted); }
   .panel .hr { height:1px; background:var(--line); margin:10px 0; }
+  .left { grid-area: left; overflow:auto; }
 
-  /* Tabs (left) */
-  .tabs { display:flex; gap:6px; margin-bottom:6px; }
+  /* Tabs */
+  .tabs { display:flex; gap:6px; margin-bottom:6px; position: sticky; top: 0; background:var(--panel); padding-bottom: 6px; z-index: 2; }
   .tab-btn {
     flex:1; text-align:center; padding:6px; border-radius:8px; border:1px solid var(--line);
     background:#151d37; color:var(--text); cursor:pointer;
@@ -75,7 +80,9 @@
   .tab-btn.active { background:#1d2749; border-color:#2e3f76; }
   .tab-content { display:none; }
   .tab-content.active { display:block; }
-  .form { display:grid; gap:8px; }
+
+  /* Form */
+  .form { display:grid; gap:10px; }
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   label { font-weight:600; font-size:12px; color:#cfe0ff; }
   select, input[type="date"], input[type="range"], input[type="number"], input[type="text"] {
@@ -83,46 +90,81 @@
   }
   input[type="range"] { width: 150px; }
   .help { font-size:12px; color:var(--muted); }
+  .chip { display:inline-block; padding:2px 6px; border-radius:999px; background:#142349; color:#cde1ff; font-size:12px; }
 
   /* Map */
   #map { grid-area: map; height: 100%; width: 100%; }
-  .left { grid-area: left; overflow:auto; }
-  .right { grid-area: right; overflow:auto; }
   .legend { background:#0f1730; border:1px solid var(--line); border-radius:8px; padding:8px; text-align:center; }
   .legend img { max-width:100%; height:auto; }
 
-  /* Bottom “trainers” */
-  .hint { font-size:12px; color:#cde1ff; background:#142349; border:1px dashed #264987; padding:8px; border-radius:8px; }
+  /* Learn Drawer */
+  .learn-toggle { margin-left: 6px; }
+  .learn-drawer {
+    position: fixed; right: 12px; top: 64px; bottom: 12px; width: 380px; max-width: 94vw;
+    background: rgba(17,23,43,.98); backdrop-filter: blur(6px);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.3);
+    display: none; z-index: 20; padding: 12px; overflow:auto;
+  }
+  .learn-drawer.open { display:block; }
+  .learn-drawer h3 { margin: 6px 0; }
+  .learn-search { width:100%; margin-bottom:8px; }
+  .learn-section { border:1px solid var(--line); border-radius:10px; padding:8px; margin-bottom:8px; background:#0f1730; }
+  .learn-section h4 { margin:4px 0 6px; }
+  .kbd { background:#0c1636; border:1px solid #263b80; padding:1px 6px; border-radius:6px; font-size:12px; }
 
-  /* Mobile: sidebars become bottom sheets */
-  @media (max-width: 1020px) {
+  /* Learn Modal */
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index:30; }
+  .modal.open { display:flex; }
+  .modal .modal-body {
+    width: min(900px, 95vw); max-height: 90vh; overflow:auto;
+    background:#101a36; border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+  }
+
+  /* Layer stack */
+  .stack { display:grid; gap:8px; }
+  .stack-item {
+    border:1px solid var(--line); border-radius:10px; padding:8px; background:#0f1730;
+    display:grid; gap:6px;
+  }
+  .stack-item .row-top { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+  .stack-item .title { font-weight:600; font-size:13px; }
+  .stack-item .controls { display:flex; gap:6px; align-items:center; }
+  .icon-btn { background:#162045; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:4px 6px; cursor:pointer; }
+  .icon-btn:hover { background:#1b2959; }
+  .danger { border-color:#52222a; background:#281318; color:#ff9aa5; }
+
+  /* Toast */
+  .toast {
+    position: fixed; z-index: 40; right: 12px; bottom: 12px;
+    padding: 8px 10px; background: rgba(0,0,0,.85); color: #fff; border-radius: 8px; display:none;
+  }
+
+  /* Mobile stacks left panel below map */
+  @media (max-width: 1000px) {
     .app {
-      grid-template-columns: 1fr; grid-template-rows: 56px 1fr 260px 260px;
+      grid-template-columns: 1fr; grid-template-rows: 56px 1fr auto;
       grid-template-areas:
         "header"
         "map"
-        "left"
-        "right";
+        "left";
     }
-    .panel { border-right:none; border-top: 1px solid var(--line); }
-    .panel.right { border-left:none; }
   }
 </style>
 </head>
 <body>
 <div class="app">
-  <!-- Header -->
   <header>
     <div class="title">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
       <h1>Open EO Viewer</h1>
       <span class="muted">Explore • Compare • Animate • Analyze</span>
+      <button class="btn icon learn-toggle" id="openLearn">?</button>
+      <button class="btn icon" id="openLearnModal">Learn page</button>
     </div>
     <div class="actions">
       <button class="btn" id="snapshotBtn">Snapshot</button>
       <button class="btn" id="bookmarkSave">Save Bookmark</button>
       <select id="bookmarkLoad"><option value="">Load…</option></select>
-      <a class="btn" href="https://gibs.earthdata.nasa.gov/" target="_blank">Deploy/Docs</a>
     </div>
   </header>
 
@@ -140,25 +182,28 @@
     <section id="tab-explore" class="tab-content active">
       <div class="form">
         <div class="row">
-          <label for="layer">Layer</label>
-          <select id="layer">
-            <optgroup label="True Color">
-              <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS SNPP True Color</option>
-              <option value="VIIRS_NOAA20_CorrectedReflectance_TrueColor" selected>VIIRS NOAA-20 True Color</option>
-              <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra True Color</option>
-            </optgroup>
-          </select>
+          <label for="catalogFilter">Find layer</label>
+          <input type="text" id="catalogFilter" placeholder="type to filter…">
         </div>
         <div class="row">
+          <label for="catalog">Catalog</label>
+          <select id="catalog" size="6" style="min-width:300px; max-width:100%"></select>
+        </div>
+        <div class="row">
+          <button class="btn" id="addToStack">Add to stack</button>
           <label for="date">Date</label>
           <input type="date" id="date">
+          <label><input type="checkbox" id="toggleOSM"> OSM</label>
         </div>
         <div class="row">
-          <label for="opacity">Opacity</label>
-          <input type="range" id="opacity" min="0" max="1" step="0.05" value="1">
-          <label><input type="checkbox" id="toggleOSM"> OSM basemap</label>
+          <label for="globalOpacity">Global opacity</label>
+          <input type="range" id="globalOpacity" min="0" max="1" step="0.05" value="1">
+          <span class="help">applies to the top active layer</span>
         </div>
-        <div class="hint">Tip: press <b>[</b> and <b>]</b> to step the date by ±1 day.</div>
+        <div class="hr"></div>
+        <h2>Layer Stack</h2>
+        <div id="stack" class="stack"></div>
+        <div class="help">Stack multiple layers (e.g., Fires over True Color). Use ↑/↓ to reorder; each layer has its own opacity & toggle.</div>
       </div>
     </section>
 
@@ -184,16 +229,41 @@
 
     <!-- Animate -->
     <section id="tab-animate" class="tab-content">
-      <p class="help">Play a time-lapse for the selected layer.</p>
+      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>, then play.</p>
       <div class="form">
         <div class="row">
           <label for="animLayer">Layer</label>
           <select id="animLayer"></select>
         </div>
         <div class="row">
-          <button class="btn primary" id="activateAnimate">Activate Animation</button>
+          <label>Start</label><input type="date" id="animStart">
+          <label>End</label><input type="date" id="animEnd">
         </div>
-        <div class="hint">After activation, the time slider appears on the map (bottom-left).</div>
+        <div class="row">
+          <label>Step</label><input type="number" id="animStep" value="1" min="1" style="width:70px">
+          <select id="animUnits">
+            <option>days</option>
+            <option>weeks</option>
+            <option>hours</option>
+            <option>minutes</option>
+            <option>seconds</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Speed (ms/frame)</label><input type="number" id="animSpeed" value="500" min="50" step="50" style="width:90px">
+          <label><input type="checkbox" id="animLoop" checked> Loop</label>
+          <label><input type="checkbox" id="animPingPong"> Ping-Pong</label>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="animPlay">Play</button>
+          <button class="btn" id="animPause">Pause</button>
+          <button class="btn ghost" id="animStepBack">← Step</button>
+          <button class="btn ghost" id="animStepFwd">Step →</button>
+        </div>
+        <div class="row">
+          <progress id="animProgress" value="0" max="100" style="width:100%"></progress>
+          <span id="animCurrent" class="chip">—</span>
+        </div>
       </div>
     </section>
 
@@ -205,216 +275,514 @@
           <button class="btn" id="exportGeoJSON">Export GeoJSON</button>
           <label class="btn" for="importGeoJSON">Import GeoJSON</label>
           <input id="importGeoJSON" type="file" accept=".geojson,.json" style="display:none">
+          <button class="btn" id="snapshotBtn2">Snapshot</button>
         </div>
-        <div class="row">
-          <button class="btn primary" id="analyzeAOI">Analyze AOI</button>
-          <span id="aoiStatus" class="muted">no AOI selected</span>
-        </div>
-        <div class="hr"></div>
-        <div id="aoiResults" class="help">Mean RGB / brightness will appear here after analysis.</div>
+        <div id="aoiStatus" class="help">No AOI selected.</div>
       </div>
     </section>
   </aside>
 
   <!-- Map -->
   <main id="map"></main>
-
-  <!-- Right Panel: Learn -->
-  <aside class="panel right">
-    <h2>Learn</h2>
-    <div class="help">
-      <p><b>VIIRS SNPP / NOAA-20</b> — Daily global imagery at ~375 m for visible bands. Great for smoke, storms, large-scale features.</p>
-      <p><b>MODIS Terra</b> — Long-running mission with global daily coverage at 250–1000 m. Useful for historical context.</p>
-      <p><b>GIBS (NASA)</b> serves many layers (true color, fires, snow/ice, aerosols). This app uses <b>WMS</b> to request tiles by <b>date</b> and <b>layer</b>.</p>
-      <p>Use <b>Explore</b> to inspect a single date, <b>Compare</b> to swipe between dates/layers, <b>Animate</b> for time-lapse, and <b>Analyze</b> to draw AOIs and export GeoJSON.</p>
-    </div>
-    <div class="hr"></div>
-    <h2>Legend</h2>
-    <div id="legend" class="legend"><em>No legend for this layer.</em></div>
-    <div class="hr"></div>
-    <div class="hint">Pro tip: share your exact view using the URL — it encodes map position and state.</div>
-  </aside>
 </div>
 
+<!-- Learn Drawer -->
+<div class="learn-drawer" id="learnDrawer" aria-label="Learn panel" tabindex="-1">
+  <div class="row" style="justify-content:space-between; align-items:center;">
+    <h3>Learn</h3>
+    <button class="btn ghost" id="closeLearn">Close</button>
+  </div>
+  <input class="learn-search" id="learnSearch" placeholder="Search…">
+  <div id="learnContent"></div>
+  <div class="help">Press <span class="kbd">?</span> to toggle, <span class="kbd">Esc</span> to close.</div>
+</div>
+
+<!-- Learn Modal (full page) -->
+<div class="modal" id="learnModal" aria-modal="true" role="dialog">
+  <div class="modal-body">
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <h2>Open EO — Learn</h2>
+      <button class="btn" id="closeLearnModal">Close</button>
+    </div>
+    <div id="learnModalContent"></div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
 <script>
-  // ====== Small helpers ======
-  const $ = sel => document.querySelector(sel);
-  const todayISO = new Date().toISOString().slice(0,10);
-  const defaultDateISO = '2025-06-06';
-  const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?';
+/* ==========================
+   Constants & Utilities
+   ========================== */
+const $ = sel => document.querySelector(sel);
+const todayISO = new Date().toISOString().slice(0,10);
+const defaultDateISO = todayISO;
+const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?';
+const showToast = (msg, ms=2200) => {
+  const t = $('#toast'); t.textContent = msg; t.style.display='block';
+  clearTimeout(showToast._t); showToast._t = setTimeout(()=>t.style.display='none', ms);
+};
 
-  // ====== Tabs logic (no overlap; each tool has its own space) ======
-  document.querySelectorAll('.tab-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(p=>p.classList.remove('active'));
-      btn.classList.add('active');
-      $('#'+btn.dataset.tab).classList.add('active');
-    });
-  });
+/* ==========================
+   Map setup
+   ========================== */
+const map = L.map('map', { center:[20,0], zoom:3, timeDimension:true, timeDimensionControl:false });
+map.zoomControl.setPosition('bottomleft');
+new L.Hash(map);
+L.control.scale({imperial:false}).addTo(map);
+map.attributionControl.setPrefix(false);
+map.attributionControl.addAttribution('Imagery © NASA EOSDIS GIBS · © Leaflet & OSM');
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' });
 
-  // ====== Map setup ======
-  const map = L.map('map', { center:[20,0], zoom:3, timeDimension:true, timeDimensionControl:false });
-  map.zoomControl.setPosition('bottomleft');
-  new L.Hash(map);
-  L.control.scale({imperial:false}).addTo(map);
-  map.attributionControl.setPrefix(false);
-  map.attributionControl.addAttribution('Imagery © NASA EOSDIS GIBS · © Leaflet & OSM');
+const overlays = L.tileLayer.wms(GIBS_WMS, { layers:'Coastlines,Reference_Features', format:'image/png', transparent:true, version:'1.3.0' }).addTo(map);
 
-  // Optional basemap
-  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap' });
+// Draw/AOI
+const drawnItems = new L.FeatureGroup().addTo(map);
+const drawControl = new L.Control.Draw({
+  position:'bottomleft',
+  edit: { featureGroup: drawnItems },
+  draw: { polygon: { allowIntersection:false, showArea:true }, rectangle:true, marker:false, circle:false, circlemarker:false, polyline:false }
+});
+map.addControl(drawControl);
+map.on(L.Draw.Event.CREATED, e=>{
+  drawnItems.addLayer(e.layer);
+  if (e.layer instanceof L.Polygon || e.layer instanceof L.Rectangle) {
+    const rings = e.layer.getLatLngs()[0], m2 = L.GeometryUtil.geodesicArea(rings);
+    e.layer.bindTooltip(`${(m2/1e6).toFixed(2)} km²`).openTooltip();
+    $('#aoiStatus').textContent = 'AOI ready';
+  }
+});
 
-  // Overlays for context
-  const overlays = L.tileLayer.wms(GIBS_WMS, { layers:'Coastlines,Reference_Features', format:'image/png', transparent:true, version:'1.3.0' }).addTo(map);
+/* ==========================
+   Catalog (auto) + Grouping
+   ========================== */
+const groups = {
+  "True Color": [ /TrueColor/i ],
+  "Infrared (IR)": [ /IR|Infrared|Brightness_Temp/i ],
+  "Fires/Hotspots": [ /Fire|Fires|Thermal Anomalies/i ],
+  "Snow & Ice": [ /Snow|Ice|Sea_Ice|SC|SIC/i ],
+  "Aerosol/Atmosphere": [ /Aerosol|AOD|SO2|NO2|Ozone|CO Total Column/i ],
+  "Night Lights": [ /Night|DNB|Nighttime/i ],
+  "Ocean/SST/Color": [ /SST|Chlorophyll|Ocean|Sea Surface/i ],
+  "Other": [ /.*/ ]
+};
+let catalogList = []; // {name, title, group}
+function matchGroup(titleOrName){
+  for (const [g, regs] of Object.entries(groups)){
+    if (regs.some(rx => rx.test(titleOrName))) return g;
+  }
+  return "Other";
+}
+async function populateCatalog(){
+  try{
+    const url = GIBS_WMS + 'SERVICE=WMS&REQUEST=GetCapabilities';
+    const res = await fetch(url); const text = await res.text();
+    const xml = new DOMParser().parseFromString(text, 'application/xml');
+    const layers = Array.from(xml.getElementsByTagName('Layer')).filter(n => n.getElementsByTagName('Name')[0]);
 
-  // Draw/AOI layer
-  const drawnItems = new L.FeatureGroup().addTo(map);
-  const drawControl = new L.Control.Draw({
-    position:'bottomleft',
-    edit: { featureGroup: drawnItems },
-    draw: { polygon: { allowIntersection:false, showArea:true }, rectangle:true, marker:false, circle:false, circlemarker:false, polyline:false }
-  });
-  map.addControl(drawControl);
-  map.on(L.Draw.Event.CREATED, e=>{
-    drawnItems.addLayer(e.layer);
-    if (e.layer instanceof L.Polygon || e.layer instanceof L.Rectangle) {
-      const rings = e.layer.getLatLngs()[0], m2 = L.GeometryUtil.geodesicArea(rings);
-      e.layer.bindTooltip(`${(m2/1e6).toFixed(2)} km²`).openTooltip();
-      $('#aoiStatus').textContent = 'AOI ready';
+    const list = [];
+    for (const Lyr of layers){
+      const name = Lyr.getElementsByTagName('Name')[0]?.textContent || '';
+      const title = Lyr.getElementsByTagName('Title')[0]?.textContent || name;
+      if (!name) continue;
+      const g = matchGroup(`${name} ${title}`);
+      list.push({ name, title, group: g });
     }
-  });
-
-  // ====== Imagery layers ======
-  function buildWMS(layerId, dateISO){
-    return L.tileLayer.wms(GIBS_WMS, {
-      layers: layerId, format:'image/jpeg', transparent:false, version:'1.3.0',
-      time: dateISO || todayISO, crossOrigin:'anonymous'
-    });
+    // Deduplicate & sort
+    const seen = new Set(); catalogList = [];
+    list.forEach(item => { if (!seen.has(item.name)){ seen.add(item.name); catalogList.push(item); } });
+    catalogList.sort((a,b)=> (a.group===b.group) ? a.title.localeCompare(b.title) : a.group.localeCompare(b.group));
+    renderCatalog();
+    // Seed compare & animate selects
+    cloneCatalogTo($('#leftLayer')); cloneCatalogTo($('#rightLayer')); cloneCatalogTo($('#animLayer'));
+    // Preselect baseline
+    $('#date').value = defaultDateISO;
+    setStackBase('VIIRS_NOAA20_CorrectedReflectance_TrueColor', defaultDateISO);
+  } catch(e){
+    console.warn('Capabilities fetch failed', e);
   }
-  let singleLayer = null;
-  function setSingleLayer(layerId, dateISO){
-    if (singleLayer) map.removeLayer(singleLayer);
-    singleLayer = buildWMS(layerId, dateISO).addTo(map);
-    singleLayer.setOpacity(parseFloat($('#opacity').value || '1'));
-    updateLegend(layerId);
-  }
-
-  // ====== Compare (side-by-side) ======
-  let leftL=null, rightL=null, sbs=null;
-  function activateCompare(){
-    if (singleLayer){ map.removeLayer(singleLayer); singleLayer=null; }
-    if (sbs){ map.removeControl(sbs); sbs=null; }
-    if (leftL) map.removeLayer(leftL);
-    if (rightL) map.removeLayer(rightL);
-    leftL  = buildWMS($('#leftLayer').value,  $('#leftDate').value).addTo(map);
-    rightL = buildWMS($('#rightLayer').value, $('#rightDate').value).addTo(map);
-    const op = parseFloat($('#opacity').value || '1'); leftL.setOpacity(op); rightL.setOpacity(op);
-    sbs = L.control.sideBySide(leftL, rightL).addTo(map);
-    updateLegend(null); // ambiguous in compare
-  }
-
-  // ====== Animate (TimeDimension) ======
-  let tdLayer=null, tdCtrl=null;
-  function activateAnimate(){
-    if (singleLayer){ map.removeLayer(singleLayer); singleLayer=null; }
-    if (sbs){ map.removeControl(sbs); sbs=null; }
-    if (tdLayer){ map.removeLayer(tdLayer); tdLayer=null; }
-    const base = L.tileLayer.wms(GIBS_WMS, { layers: $('#animLayer').value, format:'image/jpeg', version:'1.3.0', transparent:false, crossOrigin:'anonymous' });
-    tdLayer = L.timeDimension.layer.wms(base, { updateTimeDimension:true, requestTimeFromCapabilities:false, cache:8 }).addTo(map);
-    if (!tdCtrl) {
-      tdCtrl = new L.Control.TimeDimension({ position:'bottomleft', timeSliderDragUpdate:true, playerOptions: { transitionTime: 500 }});
-      map.addControl(tdCtrl);
+}
+function renderCatalog(){
+  const sel = $('#catalog'); sel.innerHTML = '';
+  let currentGroup = null;
+  catalogList.forEach(item=>{
+    if (item.group !== currentGroup){
+      const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
+      currentGroup = item.group;
     }
-    updateLegend($('#animLayer').value);
+    const opt = document.createElement('option');
+    opt.value = item.name; opt.textContent = item.title;
+    sel.lastChild.appendChild(opt);
+  });
+}
+$('#catalogFilter').addEventListener('input', ()=>{
+  const q = $('#catalogFilter').value.toLowerCase();
+  const sel = $('#catalog'); sel.innerHTML = '';
+  let current = null;
+  catalogList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q)).forEach(item=>{
+    if (item.group !== current){
+      const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
+      current = item.group;
+    }
+    const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title;
+    sel.lastChild.appendChild(opt);
+  });
+});
+function cloneCatalogTo(selectEl){
+  const tmp = document.createElement('select');
+  renderCatalog(); // ensure fresh
+  tmp.innerHTML = $('#catalog').innerHTML;
+  selectEl.innerHTML = tmp.innerHTML;
+  // Default picks
+  const def = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+  if ([...selectEl.options].some(o=>o.value===def)) selectEl.value=def;
+}
+
+/* ==========================
+   Layer creation helpers
+   ========================== */
+function buildWMS(layerId, dateISO){
+  return L.tileLayer.wms(GIBS_WMS, {
+    layers: layerId, format:'image/png', // png to preserve transparency for stacks
+    transparent:true, version:'1.3.0',
+    time: dateISO || todayISO, crossOrigin:'anonymous'
+  });
+}
+function legendURL(layerId){
+  return GIBS_WMS + `SERVICE=WMS&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${encodeURIComponent(layerId)}`;
+}
+
+/* ==========================
+   Layer Stack (Explore)
+   ========================== */
+const stackState = []; // [{id, title, layer, opacity, visible}]
+function setStackBase(layerId, dateISO){
+  // ensure at least one base (True Color)
+  addLayerToStack(layerId, dateISO);
+}
+function addLayerToStack(layerId, dateISO){
+  const meta = catalogList.find(x=>x.name===layerId) || {title:layerId};
+  const layer = buildWMS(layerId, dateISO).addTo(map);
+  layer.setOpacity(1);
+  stackState.push({ id: layerId, title: meta.title, layer, opacity:1, visible:true, date: dateISO || todayISO });
+  overlays.bringToFront();
+  renderStack();
+  showToast(`Added: ${meta.title}`);
+}
+function renderStack(){
+  const c = $('#stack'); c.innerHTML='';
+  stackState.slice().reverse().forEach((item, idxReverse)=>{
+    const idx = stackState.length-1-idxReverse; // true index
+    const el = document.createElement('div'); el.className='stack-item';
+
+    const top = document.createElement('div'); top.className='row-top';
+    const title = document.createElement('div'); title.className='title'; title.textContent = item.title;
+    const ctrls = document.createElement('div'); ctrls.className='controls';
+
+    const btnUp = document.createElement('button'); btnUp.className='icon-btn'; btnUp.textContent='↑';
+    btnUp.onclick = ()=>{ if (idx < stackState.length-1){ const tmp = stackState[idx]; stackState[idx]=stackState[idx+1]; stackState[idx+1]=tmp; readdAll(); } };
+    const btnDown = document.createElement('button'); btnDown.className='icon-btn'; btnDown.textContent='↓';
+    btnDown.onclick = ()=>{ if (idx > 0){ const tmp = stackState[idx]; stackState[idx]=stackState[idx-1]; stackState[idx-1]=tmp; readdAll(); } };
+    const btnVis = document.createElement('button'); btnVis.className='icon-btn'; btnVis.textContent = item.visible?'Hide':'Show';
+    btnVis.onclick = ()=>{ item.visible = !item.visible; if (item.visible) item.layer.addTo(map); else map.removeLayer(item.layer); renderStack(); };
+    const btnLegend = document.createElement('a'); btnLegend.className='icon-btn'; btnLegend.textContent='Legend'; btnLegend.href=legendURL(item.id); btnLegend.target='_blank';
+    const btnDel = document.createElement('button'); btnDel.className='icon-btn danger'; btnDel.textContent='Remove';
+    btnDel.onclick = ()=>{ map.removeLayer(item.layer); stackState.splice(idx,1); renderStack(); };
+
+    ctrls.append(btnUp, btnDown, btnVis, btnLegend, btnDel);
+    top.append(title, ctrls);
+
+    const mid = document.createElement('div'); mid.className='row';
+    const labOp = document.createElement('label'); labOp.textContent='Opacity';
+    const range = document.createElement('input'); range.type='range'; range.min='0'; range.max='1'; range.step='0.05'; range.value=String(item.opacity);
+    range.oninput = ()=>{ item.opacity = parseFloat(range.value); item.layer.setOpacity(item.opacity); };
+
+    const labDate = document.createElement('label'); labDate.textContent='Date';
+    const date = document.createElement('input'); date.type='date'; date.value=item.date || defaultDateISO;
+    date.onchange = ()=>{ item.date = date.value; item.layer.setParams({time: item.date}); };
+
+    mid.append(labOp, range, labDate, date);
+
+    el.append(top, mid);
+    c.appendChild(el);
+  });
+
+  // Ensure draw and overlays top
+  overlays.bringToFront();
+  drawnItems.bringToFront();
+}
+function readdAll(){
+  // remove all, then re-add in order
+  stackState.forEach(s=>{ if (map.hasLayer(s.layer)) map.removeLayer(s.layer); });
+  stackState.forEach(s=>{ if (s.visible) s.layer.addTo(map); s.layer.setOpacity(s.opacity); });
+  renderStack();
+}
+
+$('#addToStack').addEventListener('click', ()=>{
+  const sel = $('#catalog');
+  const val = sel.value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+  addLayerToStack(val, $('#date').value || todayISO);
+});
+$('#date').addEventListener('change', ()=>{
+  // convenience: update topmost visible layer date
+  for (let i=stackState.length-1; i>=0; i--){
+    if (stackState[i].visible) { stackState[i].date = $('#date').value; stackState[i].layer.setParams({time: stackState[i].date}); break; }
   }
-
-  // ====== Legend ======
-  async function updateLegend(layerId){
-    const box = $('#legend');
-    if (!layerId || /TrueColor/i.test(layerId)) { box.innerHTML = '<em>No legend for this layer.</em>'; return; }
-    const url = GIBS_WMS + `SERVICE=WMS&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${encodeURIComponent(layerId)}`;
-    box.innerHTML = `<img alt="Legend" src="${url}">`;
+});
+$('#globalOpacity').addEventListener('input', ()=>{
+  // convenience: set opacity on topmost visible layer
+  for (let i=stackState.length-1; i>=0; i--){
+    if (stackState[i].visible){ stackState[i].opacity = parseFloat($('#globalOpacity').value); stackState[i].layer.setOpacity(stackState[i].opacity); renderStack(); break; }
   }
+});
+$('#toggleOSM').addEventListener('change', e=>{
+  if (e.target.checked) { osm.addTo(map); overlays.bringToFront(); readdAll(); }
+  else { map.removeLayer(osm); }
+});
 
-  // ====== UI bindings: Explore ======
-  $('#date').value = defaultDateISO;
-  $('#date').min = '2000-01-01'; $('#date').max = todayISO;
-  setSingleLayer($('#layer').value, $('#date').value);
-  $('#layer').addEventListener('change', ()=> setSingleLayer($('#layer').value, $('#date').value));
-  $('#date').addEventListener('change', ()=> singleLayer && singleLayer.setParams({ time: $('#date').value || todayISO }));
-  $('#opacity').addEventListener('input', ()=> {
-    const v = parseFloat($('#opacity').value);
-    if (singleLayer) singleLayer.setOpacity(v);
-    if (leftL) leftL.setOpacity(v);
-    if (rightL) rightL.setOpacity(v);
-    if (tdLayer) tdLayer.setOpacity(v);
-  });
-  $('#toggleOSM').addEventListener('change', e=>{
-    if (e.target.checked) { osm.addTo(map); if (singleLayer) singleLayer.bringToFront(); if (leftL&&rightL){ leftL.bringToFront(); rightL.bringToFront(); } overlays.bringToFront(); }
-    else { map.removeLayer(osm); }
-  });
-  document.addEventListener('keydown', e=>{ if (e.key==='['||e.key===']'){ const d=new Date($('#date').value||todayISO); d.setUTCDate(d.getUTCDate() + (e.key==='['?-1:1)); const iso=d.toISOString().slice(0,10); $('#date').value=iso; singleLayer && singleLayer.setParams({time:iso}); } });
+/* ==========================
+   Compare (Side-by-side)
+   ========================== */
+let leftL=null, rightL=null, sbs=null;
+function activateCompare(){
+  if (sbs){ map.removeControl(sbs); sbs=null; }
+  if (leftL) map.removeLayer(leftL);
+  if (rightL) map.removeLayer(rightL);
+  leftL  = buildWMS($('#leftLayer').value,  $('#leftDate').value).addTo(map);
+  rightL = buildWMS($('#rightLayer').value, $('#rightDate').value).addTo(map);
+  sbs = L.control.sideBySide(leftL, rightL).addTo(map);
+  overlays.bringToFront(); drawnItems.bringToFront();
+}
+$('#activateCompare').addEventListener('click', activateCompare);
 
-  // ====== Populate Compare/Animate selects from main layer list ======
-  function cloneLayerOptions(from, to){ to.innerHTML = from.innerHTML; }
-  cloneLayerOptions($('#layer'), $('#leftLayer'));
-  cloneLayerOptions($('#layer'), $('#rightLayer'));
-  cloneLayerOptions($('#layer'), $('#animLayer'));
-  $('#leftLayer').value=$('#layer').value; $('#rightLayer').value=$('#layer').value;
-  $('#leftDate').value=$('#date').value;   $('#rightDate').value=$('#date').value;
-  $('#activateCompare').addEventListener('click', activateCompare);
-  $('#activateAnimate').addEventListener('click', activateAnimate);
+/* Populate compare & animate selects once catalog ready */
+function syncCompareAnimateSelects(){
+  cloneCatalogTo($('#leftLayer'));
+  cloneCatalogTo($('#rightLayer'));
+  cloneCatalogTo($('#animLayer'));
+  $('#leftDate').value = defaultDateISO; $('#rightDate').value = defaultDateISO;
+}
 
-  // ====== Analyze ======
-  $('#exportGeoJSON').addEventListener('click', ()=>{
-    const fc = drawnItems.toGeoJSON();
-    const blob = new Blob([JSON.stringify(fc, null, 2)], {type:'application/geo+json'});
-    const a = Object.assign(document.createElement('a'), {href:URL.createObjectURL(blob), download:'aoi.geojson'}); a.click();
-    URL.revokeObjectURL(a.href);
-  });
-  $('#importGeoJSON').addEventListener('change', async (ev)=>{
-    const f = ev.target.files?.[0]; if (!f) return;
-    try { const txt=await f.text(); L.geoJSON(JSON.parse(txt)).eachLayer(l=>drawnItems.addLayer(l)); $('#aoiStatus').textContent='AOI imported'; }
-    catch { $('#aoiStatus').textContent='Invalid GeoJSON'; }
-    ev.target.value='';
-  });
-  $('#analyzeAOI').addEventListener('click', ()=>{
-    // Minimal “intuitive” feedback; you can plug your histogram/time-series logic here.
-    let poly=null; drawnItems.eachLayer(l=>{ if (!poly && (l instanceof L.Polygon || l instanceof L.Rectangle)) poly=l; });
-    if (!poly) { $('#aoiStatus').textContent='Draw a polygon/rectangle first'; return; }
-    const rings = poly.getLatLngs()[0], m2 = L.GeometryUtil.geodesicArea(rings);
-    $('#aoiResults').innerHTML = `<b>Area:</b> ${(m2/1e6).toFixed(2)} km²<br><span class="muted">Advanced stats: mean RGB, histograms, time series — can be enabled as in your previous version.</span>`;
-  });
+/* ==========================
+   Animate (custom controller)
+   ========================== */
+let animTimer=null, animFrames=[], animIndex=0, animForward=true, animLayer=null;
 
-  // ====== Snapshot & Bookmarks ======
-  $('#snapshotBtn').addEventListener('click', ()=>{
-    domtoimage.toPng($('#map')).then(url=>{
-      const a = Object.assign(document.createElement('a'), {href:url, download:`map_${new Date().toISOString().slice(0,10)}.png`}); a.click();
-    });
-  });
-  const BM_KEY='oeo_bookmarks_v2';
-  function loadBMs(){
-    const arr = JSON.parse(localStorage.getItem(BM_KEY) || '[]');
-    const sel = $('#bookmarkLoad'); sel.innerHTML='<option value="">Load…</option>';
-    arr.forEach((b,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=b.name; sel.appendChild(o); });
-    return arr;
+function buildFrames(startISO, endISO, step, units){
+  const frames=[];
+  let cur = new Date(startISO);
+  const end = new Date(endISO);
+  const add = (d, step, units) => {
+    if (units==='weeks') d.setUTCDate(d.getUTCDate()+7*step);
+    else if (units==='days') d.setUTCDate(d.getUTCDate()+step);
+    else if (units==='hours') d.setUTCHours(d.getUTCHours()+step);
+    else if (units==='minutes') d.setUTCMinutes(d.getUTCMinutes()+step);
+    else if (units==='seconds') d.setUTCSeconds(d.getUTCSeconds()+step);
+  };
+  while (cur <= end){
+    frames.push(cur.toISOString().slice(0,10)); // daily timestamps enough for WMS time (most GIBS are daily)
+    add(cur, step, units);
   }
-  function saveBM(){
-    const arr=loadBMs();
-    const name = prompt('Bookmark name?', `View ${arr.length+1}`) || `View ${arr.length+1}`;
-    arr.push({ name, center: map.getCenter(), zoom: map.getZoom(), layer: $('#layer').value, date: $('#date').value });
-    localStorage.setItem(BM_KEY, JSON.stringify(arr)); loadBMs();
-  }
-  $('#bookmarkSave').addEventListener('click', saveBM);
-  $('#bookmarkLoad').addEventListener('change', ()=>{
-    const arr=loadBMs(); const i=parseInt($('#bookmarkLoad').value,10);
-    if (!isNaN(i) && arr[i]){ const b=arr[i]; map.setView(b.center,b.zoom); $('#layer').value=b.layer; $('#date').value=b.date; setSingleLayer(b.layer,b.date); }
-    $('#bookmarkLoad').value='';
-  });
-  loadBMs();
+  return frames.length ? frames : [startISO];
+}
+function ensureAnimLayer(){
+  if (animLayer){ map.removeLayer(animLayer); animLayer=null; }
+  animLayer = buildWMS($('#animLayer').value, $('#animStart').value).addTo(map);
+}
+function applyFrame(i){
+  animIndex = i;
+  const t = animFrames[animIndex];
+  if (animLayer) animLayer.setParams({time: t});
+  $('#animCurrent').textContent = t;
+  $('#animProgress').value = Math.round(100 * (animIndex+1) / animFrames.length);
+}
+function play(){
+  if (!animFrames.length){ showToast('Set start/end and press Play again'); return; }
+  if (!animLayer) ensureAnimLayer();
+  clearInterval(animTimer);
+  const delay = Math.max(50, parseInt($('#animSpeed').value||'500',10));
+  animTimer = setInterval(()=>{
+    if (animForward) animIndex++; else animIndex--;
+    if (animIndex >= animFrames.length || animIndex < 0){
+      if ($('#animPingPong').checked){
+        animForward = !animForward;
+        animIndex = Math.max(0, Math.min(animFrames.length-1, animIndex));
+      } else if ($('#animLoop').checked){
+        animIndex = animForward ? 0 : animFrames.length-1;
+      } else {
+        pause(); return;
+      }
+    }
+    applyFrame(animIndex);
+  }, delay);
+}
+function pause(){ clearInterval(animTimer); animTimer=null; }
 
-  // ====== Legend initial ======
-  updateLegend($('#layer').value);
+$('#animPlay').addEventListener('click', ()=>{
+  const start = $('#animStart').value || defaultDateISO;
+  const end   = $('#animEnd').value   || defaultDateISO;
+  const step  = Math.max(1, parseInt($('#animStep').value||'1',10));
+  const units = $('#animUnits').value;
+  animFrames = buildFrames(start, end, step, units);
+  animIndex = 0; animForward = true;
+  ensureAnimLayer();
+  applyFrame(animIndex);
+  play();
+});
+$('#animPause').addEventListener('click', pause);
+$('#animStepFwd').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
+$('#animStepBack').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
+
+/* Keyboard shortcuts for animation */
+document.addEventListener('keydown', (e)=>{
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (activeTab !== 'tab-animate') return;
+  if (e.code==='Space'){ e.preventDefault(); if (animTimer) pause(); else play(); }
+  if (e.key==='ArrowRight'){ e.preventDefault(); $('#animStepFwd').click(); }
+  if (e.key==='ArrowLeft'){ e.preventDefault(); $('#animStepBack').click(); }
+  if (e.key==='Home'){ e.preventDefault(); pause(); applyFrame(0); }
+  if (e.key==='End'){ e.preventDefault(); pause(); if (animFrames.length) applyFrame(animFrames.length-1); }
+});
+
+/* ==========================
+   Learn Drawer + Modal
+   ========================== */
+const LEARN_HTML = `
+<div class="learn-section" id="sec-sat">
+  <h4>Satellites</h4>
+  <ul>
+    <li><b>VIIRS (SNPP / NOAA-20)</b> — ~375 m visible; daily global; great for smoke, storms, wildfires.</li>
+    <li><b>MODIS (Terra/Aqua)</b> — 250–1000 m; long time series since 2000; historic comparisons.</li>
+  </ul>
+</div>
+<div class="learn-section" id="sec-families">
+  <h4>Layer Families</h4>
+  <ul>
+    <li><b>True Color</b>: photo-like; clouds, dust, fires (via smoke).</li>
+    <li><b>Infrared (IR)</b>: thermal; night/day; cloud-top temp, hot spots.</li>
+    <li><b>Fires/Hotspots</b>: active fire detections.</li>
+    <li><b>Snow & Ice</b>: snow cover, sea ice concentration/extent.</li>
+    <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone — haze & pollution.</li>
+    <li><b>Night Lights</b>: nighttime lights (city power outages, activity).</li>
+    <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll, fronts.</li>
+  </ul>
+</div>
+<div class="learn-section" id="sec-tools">
+  <h4>When to use each Tool</h4>
+  <ul>
+    <li><b>Explore</b>: build a multi-layer view; tweak per-layer date/opacity; reorder layers.</li>
+    <li><b>Compare</b>: swipe left/right dates/layers to see change.</li>
+    <li><b>Animate</b>: time-lapse between start→end with step units (weeks/days/hours/mins/secs).</li>
+    <li><b>Analyze</b>: draw polygons/rectangles, export/import AOIs; snapshot.</li>
+  </ul>
+</div>
+<div class="learn-section" id="sec-tips">
+  <h4>Tips & Caveats</h4>
+  <ul>
+    <li>Not all layers have data every day; step a day if tiles fail.</li>
+    <li>Legends vary by layer; click “Legend” in stack items.</li>
+    <li>Stacks: place True Color at bottom, thematic overlays above.</li>
+    <li>Animation: daily cadence for many products; infra-daily depends on layer.</li>
+  </ul>
+</div>
+`;
+
+function renderLearnTargets(){
+  $('#learnContent').innerHTML = LEARN_HTML;
+  $('#learnModalContent').innerHTML = LEARN_HTML;
+}
+renderLearnTargets();
+
+function toggleLearn(open){
+  const drawer = $('#learnDrawer');
+  if (open===undefined) drawer.classList.toggle('open');
+  else drawer.classList.toggle('open', open);
+  if (drawer.classList.contains('open')) drawer.focus();
+  localStorage.setItem('learnOpen', drawer.classList.contains('open')?'1':'0');
+}
+$('#openLearn').addEventListener('click', ()=>toggleLearn());
+$('#closeLearn').addEventListener('click', ()=>toggleLearn(false));
+document.addEventListener('keydown', (e)=>{ if (e.key==='?' && !e.ctrlKey && !e.metaKey) toggleLearn(); if (e.key==='Escape') toggleLearn(false); });
+
+// Modal
+$('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'));
+$('#closeLearnModal').addEventListener('click', ()=>$('#learnModal').classList.remove('open'));
+$('#learnModal').addEventListener('click', (e)=>{ if (e.target.id==='learnModal') $('#learnModal').classList.remove('open'); });
+
+// Learn search (filter sections)
+$('#learnSearch').addEventListener('input', ()=>{
+  const q = $('#learnSearch').value.toLowerCase();
+  document.querySelectorAll('.learn-section').forEach(sec=>{
+    sec.style.display = sec.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+// Restore drawer state
+if (localStorage.getItem('learnOpen')==='1') toggleLearn(true);
+
+/* ==========================
+   Analyze / Export / Snapshot
+   ========================== */
+$('#exportGeoJSON').addEventListener('click', ()=>{
+  const fc = drawnItems.toGeoJSON();
+  const blob = new Blob([JSON.stringify(fc, null, 2)], {type:'application/geo+json'});
+  const a = Object.assign(document.createElement('a'), {href:URL.createObjectURL(blob), download:'aoi.geojson'}); a.click();
+  URL.revokeObjectURL(a.href);
+});
+$('#importGeoJSON').addEventListener('change', async (ev)=>{
+  const f = ev.target.files?.[0]; if (!f) return;
+  try { const txt=await f.text(); L.geoJSON(JSON.parse(txt)).eachLayer(l=>drawnItems.addLayer(l)); $('#aoiStatus').textContent='AOI imported'; }
+  catch { $('#aoiStatus').textContent='Invalid GeoJSON'; }
+  ev.target.value='';
+});
+function snapshot(){
+  domtoimage.toPng($('#map')).then(url=>{
+    const a = Object.assign(document.createElement('a'), {href:url, download:`map_${new Date().toISOString().slice(0,10)}.png`}); a.click();
+  });
+}
+$('#snapshotBtn').addEventListener('click', snapshot);
+$('#snapshotBtn2').addEventListener('click', snapshot);
+
+/* ==========================
+   Bookmarks (center/zoom + tab)
+   ========================== */
+const BM_KEY='oeo_bookmarks_v3';
+function loadBMs(){
+  const arr = JSON.parse(localStorage.getItem(BM_KEY) || '[]');
+  const sel = $('#bookmarkLoad'); sel.innerHTML='<option value="">Load…</option>';
+  arr.forEach((b,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=b.name; sel.appendChild(o); });
+  return arr;
+}
+function saveBM(){
+  const arr=loadBMs();
+  const name = prompt('Bookmark name?', `View ${arr.length+1}`) || `View ${arr.length+1}`;
+  arr.push({ name, center: map.getCenter(), zoom: map.getZoom(), tab: document.querySelector('.tab-btn.active')?.dataset.tab || 'tab-explore' });
+  localStorage.setItem(BM_KEY, JSON.stringify(arr)); loadBMs();
+}
+$('#bookmarkSave').addEventListener('click', saveBM);
+$('#bookmarkLoad').addEventListener('change', ()=>{
+  const arr=loadBMs(); const i=parseInt($('#bookmarkLoad').value,10);
+  if (!isNaN(i) && arr[i]){ const b=arr[i]; map.setView(b.center,b.zoom); if (b.tab){ document.querySelector(`.tab-btn[data-tab="${b.tab}"]`)?.click(); } }
+  $('#bookmarkLoad').value='';
+});
+loadBMs();
+
+/* ==========================
+   Tabs
+   ========================== */
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    $('#'+btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ==========================
+   Init
+   ========================== */
+populateCatalog().then(syncCompareAnimateSelects);
 </script>
 </body>
 </html>
