@@ -18,9 +18,7 @@
 <script src="https://cdn.jsdelivr.net/npm/leaflet-geometryutil@0.10.3/src/leaflet.geometryutil.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@2.9.0/dist/dom-to-image-more.min.js"></script>
 
-<!-- Time & Compare -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.control.min.css">
-<script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.min.js"></script>
+<!-- Compare -->
 <script src="https://cdn.jsdelivr.net/npm/leaflet-side-by-side@2.0.1/leaflet-side-by-side.min.js"></script>
 
 <!-- GIF export (client-side) -->
@@ -34,7 +32,6 @@
     --muted: #9fb0d0;
     --text: #e6ecff;
     --accent: #65b1ff;
-    --accent-2: #8be9ff;
     --line: rgba(255,255,255,.08);
     --danger: #ff6574;
   }
@@ -102,8 +99,7 @@
   .legend { background:#0f1730; border:1px solid var(--line); border-radius:8px; padding:8px; text-align:center; }
   .legend img { max-width:100%; height:auto; }
 
-  /* Learn Drawer & Modal — force above everything (even Leaflet panes) */
-  .learn-toggle { margin-left: 6px; }
+  /* Learn Drawer & Modal (always above map) */
   .learn-drawer {
     position: fixed; right: 12px; top: 64px; bottom: 12px; width: 380px; max-width: 94vw;
     background: rgba(17,23,43,.98); backdrop-filter: blur(6px);
@@ -111,14 +107,11 @@
     display: none; z-index: 2000000000; padding: 12px; overflow:auto;
   }
   .learn-drawer.open { display:block; }
-  .learn-drawer h3 { margin: 6px 0; }
   .learn-search { width:100%; margin-bottom:8px; }
   .learn-section { border:1px solid var(--line); border-radius:10px; padding:8px; margin-bottom:8px; background:#0f1730; }
-  .learn-section h4 { margin:4px 0 6px; }
   .kbd { background:#0c1636; border:1px solid #263b80; padding:1px 6px; border-radius:6px; font-size:12px; }
-
   .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center;
-           z-index: 2147483647; } /* max 32-bit int to beat any map pane */
+           z-index: 2147483647; }
   .modal.open { display:flex; }
   .modal .modal-body {
     width: min(900px, 95vw); max-height: 90vh; overflow:auto;
@@ -144,13 +137,14 @@
     padding: 8px 10px; background: rgba(0,0,0,.85); color: #fff; border-radius: 8px; display:none;
   }
 
-  /* Animation preload overlay + GIF player */
+  /* Overlays: loader and GIF */
   .preload-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.75);
     display: none; align-items: center; justify-content: center; flex-direction: column;
     color: #fff; z-index: 2000000001;
+    pointer-events: none; /* not blocking unless open */
   }
-  .preload-overlay.open { display:flex; }
+  .preload-overlay.open { display:flex; pointer-events: auto; }
   .preload-box {
     background: #0e1630; border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 300px; text-align: center;
   }
@@ -160,16 +154,18 @@
     margin: auto;
     max-width: 100%;
     max-height: 100%;
-    pointer-events: none;
     z-index: 5000; /* above map, below modal */
     display:none;
+    pointer-events: none; /* never blocks clicks */
   }
+  #animGif[data-visible="1"] { display:block; }
   #animGifClose {
     display:none;
     position:absolute;
     right:12px;
     top:12px;
     z-index:5001;
+    pointer-events:auto;
   }
 
   /* Mobile */
@@ -191,7 +187,7 @@
       <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a 8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
       <h1>Open EO Viewer</h1>
       <span class="muted">Explore • Compare • Animate • Analyze</span>
-      <button class="btn icon learn-toggle" id="openLearn">?</button>
+      <button class="btn icon" id="openLearn">?</button>
       <button class="btn icon" id="openLearnModal">Learn page</button>
     </div>
     <div class="actions">
@@ -262,7 +258,7 @@
 
     <!-- Animate -->
     <section id="tab-animate" class="tab-content">
-      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>. This version <b>builds a GIF</b> and displays it with a loading screen.</p>
+      <p class="help">Build a GIF for smooth playback & export. Choose <b>start/end</b>, <b>step</b>, <b>units</b>, then <b>Play</b>.</p>
       <div class="form">
         <div class="row">
           <label for="animFilter">Find mode</label>
@@ -306,7 +302,7 @@
 
     <!-- Analyze -->
     <section id="tab-analyze" class="tab-content">
-      <p class="help">Draw rectangles or polygons, then export or analyze them.</p>
+      <p class="help">Draw rectangles or polygons, then export or import them as GeoJSON.</p>
       <div class="form">
         <div class="row">
           <button class="btn" id="exportGeoJSON">Export GeoJSON</button>
@@ -321,7 +317,7 @@
 
   <!-- Map -->
   <main id="map">
-    <!-- GIF player overlay -->
+    <!-- GIF overlay (never blocks clicks when hidden) -->
     <img id="animGif" alt="Animation" />
     <button id="animGifClose" class="btn ghost">Close GIF</button>
   </main>
@@ -376,7 +372,7 @@ const showToast = (msg, ms=2200) => {
 /* ==========================
    Map setup
    ========================== */
-const map = L.map('map', { center:[20,0], zoom:3, timeDimension:true, timeDimensionControl:false });
+const map = L.map('map', { center:[20,0], zoom:3 });
 map.zoomControl.setPosition('bottomleft');
 new L.Hash(map);
 L.control.scale({imperial:false}).addTo(map);
@@ -693,7 +689,7 @@ function hideLoader() {
   preloadOverlay.classList.remove('open');
 }
 
-/* Build frame date list (supports sub-daily if product allows) */
+/* Build frame date list */
 function buildFramesISO(startISO, endISO, step, units) {
   const frames=[];
   let cur = new Date(startISO);
@@ -712,7 +708,7 @@ function buildFramesISO(startISO, endISO, step, units) {
   return frames.length ? frames : [startISO];
 }
 
-/* Build a single-image WMS request for current view (EPSG:3857) */
+/* WMS URL for current view (EPSG:3857) */
 function wmsGetMapURL(layerId, isoDate, size, bounds){
   const crs = 'EPSG:3857';
   const w = size.x, h = size.y;
@@ -750,15 +746,15 @@ function fetchWmsImageForView(layerId, isoDate) {
 
 /* Build frames, optional ping-pong, then encode GIF; returns ObjectURL */
 async function buildGifForCurrentView({ layerId, startISO, endISO, step, units, speedMs, loop, pingpong }) {
-  // 1) Build date frames
+  // 1) Build dates
   let framesISO = buildFramesISO(startISO, endISO, step, units);
   if (pingpong && framesISO.length > 1) {
-    const back = framesISO.slice(1, -1).reverse(); // avoid duplicating endpoints
+    const back = framesISO.slice(1, -1).reverse();
     framesISO = framesISO.concat(back);
   }
   if (!framesISO.length) throw new Error('No frames to build');
 
-  // 2) Fetch images (Phase A)
+  // 2) Fetch images
   const imgs = [];
   showLoader(`Fetching 0 / ${framesISO.length} frames…`, 0);
   for (let i = 0; i < framesISO.length; i++) {
@@ -766,7 +762,7 @@ async function buildGifForCurrentView({ layerId, startISO, endISO, step, units, 
     try {
       const img = await fetchWmsImageForView(layerId, framesISO[i]);
       imgs.push(img);
-    } catch (e) {
+    } catch {
       const size = map.getSize();
       const blank = document.createElement('canvas');
       blank.width = size.x; blank.height = size.y;
@@ -776,13 +772,13 @@ async function buildGifForCurrentView({ layerId, startISO, endISO, step, units, 
     $('#animProgress').value = Math.round((i+1)*100/framesISO.length);
   }
 
-  // 3) Encode GIF (Phase B)
-  const repeat = loop ? 0 : -1; // 0 loops forever, -1 no loop
+  // 3) Encode GIF
+  const repeat = loop ? 0 : -1; // 0 = loop forever, -1 = no loop
   const gif = new GIF({
     workers: 2,
     quality: 10,
     workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.worker.js',
-    repeat: repeat
+    repeat
   });
 
   const size = map.getSize();
@@ -810,26 +806,26 @@ async function buildGifForCurrentView({ layerId, startISO, endISO, step, units, 
   });
 }
 
-/* Show/hide the GIF overlay */
+/* Show/hide the GIF overlay (never blocks clicks when hidden) */
 let currentGifURL = null;
 function showGif(url) {
   if (currentGifURL) URL.revokeObjectURL(currentGifURL);
   currentGifURL = url;
   animGif.src = url;
-  animGif.style.display = 'block';
+  animGif.setAttribute('data-visible', '1');
   animGifClose.style.display = 'block';
 }
 function hideGif() {
-  animGif.style.display = 'none';
+  animGif.removeAttribute('data-visible');
   animGif.src = '';
   animGifClose.style.display = 'none';
   if (currentGifURL) { URL.revokeObjectURL(currentGifURL); currentGifURL = null; }
 }
 animGifClose.addEventListener('click', hideGif);
 
-/* Animate controls: Play/Prebuild/Pause/Download */
+/* Animate controls */
 $('#animPlay').addEventListener('click', async () => {
-  hideGif(); // stop any previous GIF
+  hideGif();
   const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
   const startISO = $('#animStart').value || defaultDateISO;
   const endISO   = $('#animEnd').value   || defaultDateISO;
@@ -853,7 +849,6 @@ $('#animPlay').addEventListener('click', async () => {
     showToast('Failed to build animation.');
   }
 });
-
 $('#animPrebuild').addEventListener('click', async () => {
   hideGif();
   const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
@@ -878,9 +873,7 @@ $('#animPrebuild').addEventListener('click', async () => {
     showToast('Failed to prebuild GIF.');
   }
 });
-
 $('#animPause').addEventListener('click', hideGif);
-
 $('#animDownloadGIF').addEventListener('click', () => {
   const url = $('#animDownloadGIF').dataset.gifUrl;
   if (!url) { showToast('No GIF to download. Press Play first.'); return; }
@@ -891,7 +884,7 @@ $('#animDownloadGIF').addEventListener('click', () => {
   a.click();
 });
 
-/* Animate: wire the “Find mode” search to filter the layer select */
+/* Animate search filters the layer list */
 function filterSelectOptions(selectEl, query) {
   const q = (query || '').trim().toLowerCase();
   const tmp = document.createElement('select');
@@ -933,43 +926,43 @@ $('#animFilter').addEventListener('input', () => {
 });
 
 /* ==========================
-   Learn Drawer + Modal (stacking guards)
+   Learn Drawer + Modal
    ========================== */
 const LEARN_HTML = `
-<div class="learn-section" id="sec-sat">
+<div class="learn-section">
   <h4>Satellites</h4>
   <ul>
-    <li><b>VIIRS (SNPP / NOAA-20)</b> — ~375 m visible; daily global; good for smoke, storms, wildfires.</li>
-    <li><b>MODIS (Terra/Aqua)</b> — 250–1000 m; time series since 2000; historic comparisons.</li>
+    <li><b>VIIRS (SNPP / NOAA-20)</b> — ~375 m visible; daily global.</li>
+    <li><b>MODIS (Terra/Aqua)</b> — 250–1000 m; multi-decade time series.</li>
   </ul>
 </div>
-<div class="learn-section" id="sec-families">
+<div class="learn-section">
   <h4>Layer Families</h4>
   <ul>
-    <li><b>True Color</b>: photo-like; clouds, dust, fires (via smoke).</li>
-    <li><b>Infrared (IR)</b>: thermal; night/day; cloud-top temperature.</li>
+    <li><b>True Color</b>: photo-like composites.</li>
+    <li><b>Infrared (IR)</b>: thermal info (cloud tops, hotspots).</li>
     <li><b>Fires/Hotspots</b>: active fire detections.</li>
-    <li><b>Snow & Ice</b>: snow cover, sea ice concentration/extent.</li>
+    <li><b>Snow & Ice</b>: snow cover, sea ice concentration.</li>
     <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone.</li>
-    <li><b>Night Lights</b>: nighttime light intensity (DNB).</li>
+    <li><b>Night Lights</b>: DNB night-time radiance.</li>
     <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll.</li>
   </ul>
 </div>
-<div class="learn-section" id="sec-tools">
-  <h4>When to use each Tool</h4>
+<div class="learn-section">
+  <h4>Tools</h4>
   <ul>
-    <li><b>Explore</b>: build a multi-layer view; per-layer date/opacity; reorder layers.</li>
-    <li><b>Compare</b>: swipe left/right dates/layers to see change.</li>
-    <li><b>Animate</b>: build GIF for smooth playback and export.</li>
+    <li><b>Explore</b>: build/reorder a multi-layer stack; per-layer date/opacity.</li>
+    <li><b>Compare</b>: swipe two layers/dates side-by-side.</li>
+    <li><b>Animate</b>: builds a GIF of the current viewport.</li>
     <li><b>Analyze</b>: draw AOIs; export/import GeoJSON; snapshot.</li>
   </ul>
 </div>
-<div class="learn-section" id="sec-tips">
-  <h4>Tips & Caveats</h4>
+<div class="learn-section">
+  <h4>Tips</h4>
   <ul>
     <li>Many products are daily; sub-daily steps may repeat frames.</li>
     <li>GIF uses the current viewport; pan/zoom before building.</li>
-    <li>Stacks: True Color base + overlays for clarity.</li>
+    <li>True Color base + themed overlays keeps views readable.</li>
   </ul>
 </div>
 `;
@@ -984,7 +977,6 @@ function toggleLearn(open){
   if (open===undefined) drawer.classList.toggle('open');
   else drawer.classList.toggle('open', open);
   if (drawer.classList.contains('open')) drawer.focus();
-  localStorage.setItem('learnOpen', drawer.classList.contains('open')?'1':'0');
 }
 $('#openLearn').addEventListener('click', ()=>toggleLearn());
 $('#closeLearn').addEventListener('click', ()=>toggleLearn(false));
@@ -1002,7 +994,82 @@ document.addEventListener('keydown', (e) => {
       toggleLearn();
     }
   }
-  if (e.key === 'Escape') toggleLearn(false);
+  if (e.key === 'Escape') {
+    toggleLearn(false);
+    $('#learnModal').classList.remove('open');
+  }
 });
 
-$('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'))
+$('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'));
+$('#closeLearnModal').addEventListener('click', ()=>$('#learnModal').classList.remove('open'));
+$('#learnModal').addEventListener('click', (e)=>{ if (e.target.id==='learnModal') $('#learnModal').classList.remove('open'); });
+
+$('#learnSearch').addEventListener('input', ()=>{
+  const q = $('#learnSearch').value.toLowerCase();
+  document.querySelectorAll('.learn-section').forEach(sec=>{
+    sec.style.display = sec.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+/* ==========================
+   Analyze / Export / Snapshot
+   ========================== */
+$('#exportGeoJSON').addEventListener('click', ()=>{
+  const fc = drawnItems.toGeoJSON();
+  const blob = new Blob([JSON.stringify(fc, null, 2)], {type:'application/geo+json'});
+  const a = Object.assign(document.createElement('a'), {href:URL.createObjectURL(blob), download:'aoi.geojson'}); a.click();
+  URL.revokeObjectURL(a.href);
+});
+$('#importGeoJSON').addEventListener('change', async (ev)=>{
+  const f = ev.target.files?.[0]; if (!f) return;
+  try { const txt=await f.text(); L.geoJSON(JSON.parse(txt)).eachLayer(l=>drawnItems.addLayer(l)); $('#aoiStatus').textContent='AOI imported'; }
+  catch { $('#aoiStatus').textContent='Invalid GeoJSON'; }
+  ev.target.value='';
+});
+function snapshot(){
+  domtoimage.toPng($('#map')).then(url=>{
+    const a = Object.assign(document.createElement('a'), {href:url, download:`map_${new Date().toISOString().slice(0,10)}.png`}); a.click();
+  });
+}
+$('#snapshotBtn').addEventListener('click', snapshot);
+$('#snapshotBtn2').addEventListener('click', snapshot);
+
+/* ==========================
+   Bookmarks
+   ========================== */
+const BM_KEY='oeo_bookmarks_v3';
+function loadBMs(){
+  const arr = JSON.parse(localStorage.getItem(BM_KEY) || '[]');
+  const sel = $('#bookmarkLoad'); sel.innerHTML='<option value="">Load…</option>';
+  arr.forEach((b,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=b.name; sel.appendChild(o); });
+  return arr;
+}
+function saveBM(){
+  const arr=loadBMs();
+  const name = prompt('Bookmark name?', `View ${arr.length+1}`) || `View ${arr.length+1}`;
+  arr.push({ name, center: map.getCenter(), zoom: map.getZoom(), tab: document.querySelector('.tab-btn.active')?.dataset.tab || 'tab-explore' });
+  localStorage.setItem(BM_KEY, JSON.stringify(arr)); loadBMs();
+}
+$('#bookmarkSave').addEventListener('click', saveBM);
+$('#bookmarkLoad').addEventListener('change', ()=>{
+  const arr=loadBMs(); const i=parseInt($('#bookmarkLoad').value,10);
+  if (!isNaN(i) && arr[i]){ const b=arr[i]; map.setView(b.center,b.zoom); if (b.tab){ document.querySelector(`.tab-btn[data-tab="${b.tab}"]`)?.click(); } }
+  $('#bookmarkLoad').value='';
+});
+loadBMs();
+
+/* ==========================
+   Safety resets on load
+   ========================== */
+hideGif();
+preloadOverlay.classList.remove('open');
+$('#learnModal').classList.remove('open');
+$('#learnDrawer').classList.remove('open');
+
+/* ==========================
+   Init
+   ========================== */
+populateCatalog();
+</script>
+</body>
+</html>
