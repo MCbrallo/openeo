@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Open EO Viewer (Leaflet + GIBS)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Leaflet core -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet.draw -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+  <!-- ADD: small helpers -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-hash@0.2.1/leaflet-hash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-geometryutil@0.10.3/src/leaflet.geometryutil.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@2.9.0/dist/dom-to-image-more.min.js"></script>
+
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    .toolbar {
+      position: absolute; z-index: 1000; top: 10px; left: 10px;
+      background: rgba(255,255,255,.92); backdrop-filter: blur(4px);
+      border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.12);
+      padding: 10px; font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 96vw;
+    }
+    .toolbar label { margin-right: 6px; font-weight: 600; }
+    .toolbar select, .toolbar input[type="date"], .toolbar button, .toolbar input[type="file"] {
+      font: inherit; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px;
+      background: #fff; margin-right: 6px; margin-top: 6px;
+    }
+    .toolbar input[type="range"]{ vertical-align: middle; }
+    .toolbar .row { display: flex; flex-wrap: wrap; align-items: center; margin-top: 4px; gap: 6px; }
+    .leaflet-control-attribution { font-size: 11px; }
+    .coord {
+      background: rgba(255,255,255,.9); border-radius: 6px; padding: 4px 8px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.12); font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .toast {
+      position: absolute; z-index: 1100; right: 10px; bottom: 10px;
+      padding: 8px 10px; background: rgba(0,0,0,.8); color: #fff; border-radius: 6px;
+      font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display:none;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- ======= UI TOOLBAR (extended) ======= -->
+  <div class="toolbar" id="toolbar">
+    <div class="row">
+      <label for="layer">Layer</label>
+      <select id="layer">
+        <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS SNPP True Color</option>
+        <option value="VIIRS_NOAA20_CorrectedReflectance_TrueColor" selected>VIIRS NOAA-20 True Color</option>
+        <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra True Color</option>
+      </select>
+
+      <label for="date">Date</label>
+      <input type="date" id="date" />
+
+      <button id="export">Export GeoJSON</button>
+
+      <!-- ADD: Import & Snapshot -->
+      <input type="file" id="importGeoJSON" accept=".geojson,.json" />
+      <button id="snapshot">Export PNG</button>
+    </div>
+
+    <div class="row">
+      <!-- ADD: Opacity -->
+      <label for="opacity">Opacity</label>
+      <input id="opacity" type="range" min="0" max="1" step="0.05" value="1">
+
+      <!-- ADD: Basemap toggle -->
+      <label><input type="checkbox" id="toggleOSM"> Show OSM basemap</label>
+
+      <!-- Hints -->
+      <span style="opacity:.7">Shortcuts: [ previous day, ] next day</span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // --- Utilities -----------------------------------------------------------
+    const showToast = (msg, ms=2200) => {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.style.display='block';
+      clearTimeout(showToast._t); showToast._t = setTimeout(()=>t.style.display='none', ms);
+    };
+
+    // --- Map setup -----------------------------------------------------------
+    const todayISO = new Date().toISOString().slice(0,10);
+    const defaultDateISO = '2025-06-06';
+    const initialLayerId = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
+
+    const map = L.map('map', { center: [20, 0], zoom: 3 });
+    map.zoomControl.setPosition('bottomleft');
+
+    // Permalink (zoom/center in URL hash)
+    new L.Hash(map);
+
+    // Scale bar
+    L.control.scale({imperial:false}).addTo(map);
+
+    // Live coordinates (click to copy)
+    const coord = L.control({position:'bottomright'});
+    coord.onAdd = () => {
+      const div = L.DomUtil.create('div','coord');
+      map.on('mousemove', e => div.textContent = `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+      div.title = 'Click to copy';
+      div.style.cursor='copy';
+      L.DomEvent.on(div,'click',()=>navigator.clipboard.writeText(div.textContent).then(()=>showToast('Coordinates copied')));
+      return div;
+    };
+    coord.addTo(map);
+
+    // Attribution (GIBS + Leaflet)
+    map.attributionControl.setPrefix(false);
+    map.attributionControl.addAttribution('Imagery © NASA EOSDIS GIBS');
+    map.attributionControl.addAttribution('© Leaflet contributors');
+
+    // Optional OSM basemap (toggled)
+    const osmBase = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      attribution:'© OpenStreetMap'
+    });
+
+    // --- Drawing layer + controls -------------------------------------------
+    const drawnItems = new L.FeatureGroup().addTo(map);
+    const drawControl = new L.Control.Draw({
+      position: 'bottomleft',
+      edit: { featureGroup: drawnItems },
+      draw: {
+        polygon: { allowIntersection: false, showArea: true },
+        rectangle: true,
+        polyline: false,
+        circle: false,
+        marker: false,
+        circlemarker: false
+      }
+    });
+    map.addControl(drawControl);
+
+    // ADD: area label on create
+    map.on(L.Draw.Event.CREATED, (e) => {
+      drawnItems.addLayer(e.layer);
+      if (e.layer instanceof L.Polygon || e.layer instanceof L.Rectangle) {
+        const rings = e.layer.getLatLngs()[0]; // outer ring
+        const m2 = L.GeometryUtil.geodesicArea(rings);
+        e.layer.bindTooltip(`${(m2/1e6).toFixed(2)} km²`, {permanent:false}).openTooltip();
+      }
+    });
+
+    // Export GeoJSON (existing)
+    document.getElementById('export').addEventListener('click', () => {
+      const fc = drawnItems.toGeoJSON();
+      const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'drawings.geojson';
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      a.remove();
+    });
+
+    // ADD: Import GeoJSON
+    document.getElementById('importGeoJSON').addEventListener('change', async (ev)=>{
+      const f = ev.target.files?.[0];
+      if (!f) return;
+      try {
+        const txt = await f.text();
+        const gj = JSON.parse(txt);
+        let count = 0;
+        L.geoJSON(gj).eachLayer(l=>{ drawnItems.addLayer(l); count++; });
+        showToast(`Imported ${count} feature(s)`);
+      } catch (err) {
+        console.error(err);
+        showToast('Invalid GeoJSON');
+      } finally {
+        ev.target.value = '';
+      }
+    });
+
+    // --- NASA GIBS WMS (basic imagery) --------------------------------------
+    const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?';
+
+    // Helpful overlays: coastlines + features
+    const overlays = L.tileLayer.wms(GIBS_WMS, {
+      layers: 'Coastlines,Reference_Features',
+      format: 'image/png',
+      transparent: true,
+      version: '1.3.0'
+    }).addTo(map);
+
+    let currentImageryLayer = null;
+
+    function buildImageryLayer(layerId, dateISO) {
+      const timeParam = dateISO || todayISO;
+      const lyr = L.tileLayer.wms(GIBS_WMS, {
+        layers: layerId,
+        format: 'image/jpeg',
+        transparent: false,
+        version: '1.3.0',
+        time: timeParam,
+        crossOrigin: 'anonymous'
+      });
+      // Loading toast
+      lyr.on('loading', ()=>showToast(`Loading tiles (${layerId} @ ${timeParam})…`, 1200));
+      return lyr;
+    }
+
+    function setImageryLayer(layerId, dateISO) {
+      if (currentImageryLayer) map.removeLayer(currentImageryLayer);
+      currentImageryLayer = buildImageryLayer(layerId, dateISO);
+      currentImageryLayer.addTo(map);
+      // Opacity sync
+      currentImageryLayer.setOpacity(parseFloat(document.getElementById('opacity').value || '1'));
+      updatePermalink();
+    }
+
+    // --- UI: date & layer ----------------------------------------------------
+    const dateInput = document.getElementById('date');
+    dateInput.value = defaultDateISO;
+    dateInput.min = '2000-01-01';
+    const latestSelectableDate = todayISO < defaultDateISO ? defaultDateISO : todayISO;
+    dateInput.max = latestSelectableDate;
+
+    const layerSelect = document.getElementById('layer');
+    layerSelect.value = initialLayerId;
+
+    // Initialize first layer
+    setImageryLayer(layerSelect.value, dateInput.value);
+
+    // Keep imagery in sync when switching between layers
+    layerSelect.addEventListener('change', (e) => {
+      const dateISO = dateInput.value || todayISO;
+      setImageryLayer(e.target.value, dateISO);
+    });
+
+    // Date change -> update TIME param
+    dateInput.addEventListener('change', (e) => {
+      const d = e.target.value || todayISO;
+      if (currentImageryLayer) {
+        currentImageryLayer.setParams({ time: d });
+        updatePermalink();
+      }
+    });
+
+    // --- ADD: opacity slider -------------------------------------------------
+    document.getElementById('opacity').addEventListener('input', e=>{
+      if (currentImageryLayer) currentImageryLayer.setOpacity(parseFloat(e.target.value));
+    });
+
+    // --- ADD: OSM basemap toggle --------------------------------------------
+    document.getElementById('toggleOSM').addEventListener('change', (e)=>{
+      if (e.target.checked) {
+        osmBase.addTo(map);
+        // Ensure GIBS stays on top
+        if (currentImageryLayer) currentImageryLayer.bringToFront();
+        overlays.bringToFront();
+      } else {
+        map.removeLayer(osmBase);
+      }
+    });
+
+    // --- ADD: snapshot to PNG ------------------------------------------------
+    document.getElementById('snapshot').onclick = ()=>{
+      const node = document.getElementById('map');
+      domtoimage.toPng(node).then(dataUrl=>{
+        const a = Object.assign(document.createElement('a'), {href:dataUrl, download:`map_${dateInput.value}.png`});
+        a.click();
+      }).catch(()=>showToast('Snapshot failed'));
+    };
+
+    // --- ADD: keyboard shortcuts for date step -------------------------------
+    function stepDate(days){
+      const d = new Date(dateInput.value || todayISO);
+      d.setUTCDate(d.getUTCDate()+days);
+      const iso = d.toISOString().slice(0,10);
+      dateInput.value = iso;
+      if (currentImageryLayer) currentImageryLayer.setParams({ time: iso });
+      showToast(`Date: ${iso}`);
+      updatePermalink();
+    }
+    document.addEventListener('keydown', (e)=>{
+      if (e.key === '[') stepDate(-1);
+      if (e.key === ']') stepDate(+1);
+    });
+
+    // --- ADD: Permalink for layer & date via query params --------------------
+    function updatePermalink(){
+      const p = new URLSearchParams(window.location.search);
+      p.set('layer', layerSelect.value);
+      p.set('date', dateInput.value);
+      history.replaceState(null,'','?'+p.toString()+location.hash);
+    }
+    // On load: restore from query params (if present)
+    (function restoreFromQuery(){
+      const qp = new URLSearchParams(location.search);
+      const lyr = qp.get('layer'); const dt = qp.get('date');
+      let needsSet = false;
+      if (lyr && lyr !== layerSelect.value){ layerSelect.value = lyr; needsSet = true; }
+      if (dt  && dt  !== dateInput.value){ dateInput.value  = dt;  needsSet = true; }
+      if (needsSet) setImageryLayer(layerSelect.value, dateInput.value);
+    })();
+
+  </script>
+</body>
+</html>
