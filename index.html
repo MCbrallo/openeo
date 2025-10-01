@@ -13,6 +13,21 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css">
   <script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
 
+  <!-- Helpers -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-hash@0.2.1/leaflet-hash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-geometryutil@0.10.3/src/leaflet.geometryutil.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@2.9.0/dist/dom-to-image-more.min.js"></script>
+
+  <!-- TimeDimension (animation) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.control.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.min.js"></script>
+
+  <!-- Side-by-side swipe -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet-side-by-side@2.0.1/leaflet-side-by-side.min.js"></script>
+
+  <!-- Charts for AOI hist/time series -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
   <style>
     html, body, #map { height: 100%; margin: 0; }
     .toolbar {
@@ -20,144 +35,648 @@
       background: rgba(255,255,255,.92); backdrop-filter: blur(4px);
       border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.12);
       padding: 10px; font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 96vw;
     }
     .toolbar label { margin-right: 6px; font-weight: 600; }
-    .toolbar select, .toolbar input[type="date"], .toolbar button {
+    .toolbar select, .toolbar input[type="date"], .toolbar button, .toolbar input[type="file"], .toolbar input[type="number"] {
       font: inherit; padding: 6px 8px; border: 1px solid #ccc; border-radius: 6px;
-      background: #fff; margin-right: 6px;
+      background: #fff; margin-right: 6px; margin-top: 6px;
     }
-    .toolbar button { cursor: pointer; }
+    .toolbar input[type="range"]{ vertical-align: middle; }
+    .toolbar .row { display: flex; flex-wrap: wrap; align-items: center; margin-top: 4px; gap: 6px; }
     .leaflet-control-attribution { font-size: 11px; }
+    .coord {
+      background: rgba(255,255,255,.9); border-radius: 6px; padding: 4px 8px;
+      box-shadow: 0 1px 6px rgba(0,0,0,.12); font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .toast {
+      position: absolute; z-index: 1100; right: 10px; bottom: 10px;
+      padding: 8px 10px; background: rgba(0,0,0,.8); color: #fff; border-radius: 6px;
+      font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display:none;
+    }
+    .spinner {
+      position: absolute; z-index: 1090; top: 10px; right: 10px;
+      background: rgba(0,0,0,.6); color: #fff; padding: 6px 10px; border-radius: 6px; display:none;
+      font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .section-title { font-weight: 700; margin-right: 8px; }
+    .hidden { display: none !important; }
+
+    /* AOI panel (right) */
+    .aoi-panel {
+      position: absolute; z-index: 1000; top: 10px; right: 10px;
+      width: 340px; max-width: 90vw;
+      background: rgba(255,255,255,.96); border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.15);
+      padding: 10px;
+      font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .aoi-panel h3 { margin: 0 0 6px 0; font-size: 15px; }
+    .row-compact { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; margin: 6px 0; }
+    .legend-box { margin-top: 6px; border: 1px solid #ddd; border-radius: 6px; padding: 6px; text-align: center; }
+    .legend-box img { max-width: 100%; height: auto; }
+    .chip { display:inline-block; padding:2px 6px; border-radius: 9999px; background:#f1f5f9; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <div class="toolbar">
-    <label for="layer">Layer</label>
-    <select id="layer">
-      <!-- GIBS layer identifiers (True Color) -->
-      <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS SNPP True Color</option>
-      <option value="VIIRS_NOAA20_CorrectedReflectance_TrueColor" selected>VIIRS NOAA‑20 True Color</option>
-      <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra True Color</option>
-    </select>
+  <!-- ======= UI TOOLBAR ======= -->
+  <div class="toolbar" id="toolbar">
+    <div class="row">
+      <span class="section-title">Mode</span>
+      <select id="mode">
+        <option value="view" selected>View (single)</option>
+        <option value="compare">Compare (side-by-side)</option>
+        <option value="animate">Animate (time slider)</option>
+      </select>
 
-    <label for="date">Date</label>
-    <input type="date" id="date" />
+      <label for="layer">Layer</label>
+      <select id="layer">
+        <!-- True Color group -->
+        <optgroup label="True Color">
+          <option value="VIIRS_SNPP_CorrectedReflectance_TrueColor">VIIRS SNPP True Color</option>
+          <option value="VIIRS_NOAA20_CorrectedReflectance_TrueColor" selected>VIIRS NOAA-20 True Color</option>
+          <option value="MODIS_Terra_CorrectedReflectance_TrueColor">MODIS Terra True Color</option>
+        </optgroup>
+        <!-- Thematic (auto-populated) -->
+        <optgroup id="thematicGroup" label="Thematic (auto)">
+          <!-- populated at runtime from GetCapabilities -->
+        </optgroup>
+      </select>
 
-    <button id="export">Export GeoJSON</button>
+      <label for="date">Date</label>
+      <input type="date" id="date" />
+
+      <button id="export">Export GeoJSON</button>
+      <input type="file" id="importGeoJSON" accept=".geojson,.json" />
+      <button id="snapshot">Export PNG</button>
+    </div>
+
+    <div class="row">
+      <label for="opacity">Opacity</label>
+      <input id="opacity" type="range" min="0" max="1" step="0.05" value="1">
+      <label><input type="checkbox" id="toggleOSM"> Show OSM basemap</label>
+
+      <!-- Bookmarks -->
+      <span class="section-title">Bookmarks</span>
+      <input id="bm-name" placeholder="Name…" style="width:140px">
+      <button id="bm-save">Save</button>
+      <select id="bm-load"><option value="">Load…</option></select>
+
+      <span style="opacity:.7">Shortcuts: [ previous day, ] next day</span>
+    </div>
+
+    <!-- Compare mode controls -->
+    <div class="row hidden" id="compareRow1">
+      <span class="section-title">Left</span>
+      <select id="leftLayer"></select>
+      <input type="date" id="leftDate">
+      <span class="section-title">Right</span>
+      <select id="rightLayer"></select>
+      <input type="date" id="rightDate">
+    </div>
   </div>
 
+  <!-- AOI Analysis + Legend Panel -->
+  <div class="aoi-panel" id="aoiPanel">
+    <h3>AOI Analysis & Legend</h3>
+    <div class="row-compact">
+      <button id="aoiAnalyze">Analyze AOI</button>
+      <span class="chip" id="aoiHint">Select a polygon or rectangle first</span>
+    </div>
+
+    <div class="kv">
+      <div>Mean RGB</div><div id="meanRgb">—</div>
+      <div>Brightness</div><div id="meanBright">—</div>
+    </div>
+
+    <div><canvas id="histRGB" height="120"></canvas></div>
+
+    <div class="row-compact">
+      <label>Days back</label>
+      <input type="number" id="tsDays" value="14" min="1" max="60" style="width:70px">
+      <label>Step (days)</label>
+      <input type="number" id="tsStep" value="2" min="1" max="15" style="width:60px">
+      <button id="aoiTimeseries">Time series</button>
+    </div>
+    <div><canvas id="tsChart" height="120"></canvas></div>
+
+    <div class="legend-box" id="legendBox" style="display:none">
+      <div style="font-weight:600;margin-bottom:4px;">Legend</div>
+      <img id="legendImg" alt="Legend">
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="spinner" id="spinner">Loading…</div>
+
   <script>
-    // --- Map setup -----------------------------------------------------------
+    // --- Utilities -----------------------------------------------------------
+    const showToast = (msg, ms=2200) => {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.style.display='block';
+      clearTimeout(showToast._t); showToast._t = setTimeout(()=>t.style.display='none', ms);
+    };
+    const $ = sel => document.querySelector(sel);
+
+    // --- Map setup (with TimeDimension) -------------------------------------
     const todayISO = new Date().toISOString().slice(0,10);
     const defaultDateISO = '2025-06-06';
     const initialLayerId = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
 
-    const map = L.map('map', {
-      center: [20, 0],
-      zoom: 3
-    });
-
+    const map = L.map('map', { center: [20, 0], zoom: 3, timeDimension: true, timeDimensionControl: false });
     map.zoomControl.setPosition('bottomleft');
+    new L.Hash(map);
+    L.control.scale({imperial:false}).addTo(map);
 
-    // Attribution (GIBS + Leaflet)
+    // Live coordinates (click to copy)
+    const coord = L.control({position:'bottomright'});
+    coord.onAdd = () => {
+      const div = L.DomUtil.create('div','coord');
+      map.on('mousemove', e => div.textContent = `${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}`);
+      div.title = 'Click to copy'; div.style.cursor='copy';
+      L.DomEvent.on(div,'click',()=>navigator.clipboard.writeText(div.textContent).then(()=>showToast('Coordinates copied')));
+      return div;
+    };
+    coord.addTo(map);
+
+    // Attribution
     map.attributionControl.setPrefix(false);
     map.attributionControl.addAttribution('Imagery © NASA EOSDIS GIBS');
     map.attributionControl.addAttribution('© Leaflet contributors');
 
-    // --- Drawing layer + controls -------------------------------------------
+    // OSM base
+    const osmBase = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' });
+
+    // Spinner
+    const spinner = $('#spinner');
+    let loadingCount = 0;
+    function bindLoading(layer){
+      layer.on('loading', ()=>{ loadingCount++; spinner.style.display='block'; });
+      const done = ()=>{ loadingCount = Math.max(0, loadingCount-1); if (!loadingCount) spinner.style.display='none'; };
+      layer.on('tileload', done); layer.on('tileerror', done);
+    }
+
+    // Draw controls
     const drawnItems = new L.FeatureGroup().addTo(map);
     const drawControl = new L.Control.Draw({
       position: 'bottomleft',
       edit: { featureGroup: drawnItems },
-      draw: {
-        polygon: { allowIntersection: false, showArea: true },
-        rectangle: true,
-        polyline: false,
-        circle: false,
-        marker: false,
-        circlemarker: false
-      }
+      draw: { polygon: { allowIntersection: false, showArea: true }, rectangle: true, polyline: false, circle: false, marker: false, circlemarker: false }
     });
     map.addControl(drawControl);
-
     map.on(L.Draw.Event.CREATED, (e) => {
       drawnItems.addLayer(e.layer);
+      if (e.layer instanceof L.Polygon || e.layer instanceof L.Rectangle) {
+        const rings = e.layer.getLatLngs()[0];
+        const m2 = L.GeometryUtil.geodesicArea(rings);
+        e.layer.bindTooltip(`${(m2/1e6).toFixed(2)} km²`, {permanent:false}).openTooltip();
+      }
     });
 
-    document.getElementById('export').addEventListener('click', () => {
+    $('#export').addEventListener('click', () => {
       const fc = drawnItems.toGeoJSON();
       const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'drawings.geojson';
-      document.body.appendChild(a);
-      a.click();
-      URL.revokeObjectURL(url);
-      a.remove();
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'drawings.geojson' });
+      document.body.appendChild(a); a.click(); URL.revokeObjectURL(a.href); a.remove();
+    });
+    $('#importGeoJSON').addEventListener('change', async (ev)=>{
+      const f = ev.target.files?.[0]; if (!f) return;
+      try { const txt = await f.text(); const gj = JSON.parse(txt); let count=0;
+        L.geoJSON(gj).eachLayer(l=>{ drawnItems.addLayer(l); count++; }); showToast(`Imported ${count} feature(s)`);
+      } catch { showToast('Invalid GeoJSON'); }
+      ev.target.value = '';
     });
 
-    // --- NASA GIBS WMS (basic imagery) --------------------------------------
-    // WMS endpoint in EPSG:3857 (Web Mercator); no key required.
-    // Docs: https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?
+    // --- GIBS WMS -----------------------------------------------------------
     const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg3857/best/wms.cgi?';
 
-    // One transparent overlay with boundaries/labels to help orientation.
     const overlays = L.tileLayer.wms(GIBS_WMS, {
       layers: 'Coastlines,Reference_Features',
-      format: 'image/png',
-      transparent: true,
-      version: '1.3.0'
+      format: 'image/png', transparent: true, version: '1.3.0'
     }).addTo(map);
+    bindLoading(overlays);
 
-    let currentImageryLayer = null;
-
-    function buildImageryLayer(layerId, dateISO) {
+    function buildWMSLayer(layerId, dateISO) {
       const timeParam = dateISO || todayISO;
-      return L.tileLayer.wms(GIBS_WMS, {
-        layers: layerId,
-        format: 'image/jpeg',   // faster for full-color imagery
-        transparent: false,
-        version: '1.3.0',
-        time: timeParam,
-        crossOrigin: 'anonymous'
+      const lyr = L.tileLayer.wms(GIBS_WMS, {
+        layers: layerId, format: 'image/jpeg', transparent: false, version: '1.3.0', time: timeParam, crossOrigin: 'anonymous'
+      });
+      bindLoading(lyr);
+      return lyr;
+    }
+
+    // Single view
+    let currentImageryLayer = null;
+    function setImageryLayer(layerId, dateISO){
+      if (currentImageryLayer) map.removeLayer(currentImageryLayer);
+      currentImageryLayer = buildWMSLayer(layerId, dateISO);
+      currentImageryLayer.addTo(map);
+      currentImageryLayer.setOpacity(parseFloat($('#opacity').value || '1'));
+      updateLegend(layerId);
+      updatePermalink();
+    }
+
+    // Compare
+    let leftLayer = null, rightLayer = null, sbsCtrl = null;
+    function setCompareLayers(lId, lDate, rId, rDate){
+      if (sbsCtrl){ map.removeControl(sbsCtrl); sbsCtrl = null; }
+      if (leftLayer){ map.removeLayer(leftLayer); leftLayer = null; }
+      if (rightLayer){ map.removeLayer(rightLayer); rightLayer = null; }
+      leftLayer  = buildWMSLayer(lId, lDate).addTo(map);
+      rightLayer = buildWMSLayer(rId, rDate).addTo(map);
+      const val = parseFloat($('#opacity').value || '1');
+      leftLayer.setOpacity(val); rightLayer.setOpacity(val);
+      sbsCtrl = L.control.sideBySide(leftLayer, rightLayer).addTo(map);
+      overlays.bringToFront();
+      updateLegend(null); // legend ambiguous in compare → hide
+    }
+
+    // Animate
+    let tdControl = null, tdLayer = null;
+    function setAnimateLayer(layerId){
+      const base = L.tileLayer.wms(GIBS_WMS, { layers: layerId, format: 'image/jpeg', version: '1.3.0', transparent: false, crossOrigin: 'anonymous' });
+      bindLoading(base);
+      if (tdLayer) { map.removeLayer(tdLayer); tdLayer = null; }
+      tdLayer = L.timeDimension.layer.wms(base, { updateTimeDimension: true, requestTimeFromCapabilities: false, cache: 8 });
+      tdLayer.addTo(map);
+      if (!tdControl) {
+        tdControl = new L.Control.TimeDimension({ position: 'bottomleft', timeSliderDragUpdate: true, playerOptions: { transitionTime: 500, loop: false, startOver: true }});
+        map.addControl(tdControl);
+      }
+      overlays.bringToFront();
+      updateLegend(layerId);
+    }
+    function removeAnimate(){
+      if (tdLayer){ map.removeLayer(tdLayer); tdLayer = null; }
+      if (tdControl){ map.removeControl(tdControl); tdControl = null; }
+    }
+
+    // UI init
+    const dateInput = $('#date');
+    dateInput.value = defaultDateISO; dateInput.min = '2000-01-01';
+    const latestSelectableDate = todayISO < defaultDateISO ? defaultDateISO : todayISO;
+    dateInput.max = latestSelectableDate;
+    const layerSelect = $('#layer'); layerSelect.value = initialLayerId;
+
+    // Populate compare selects from main
+    function populateLayerSelect(el){ el.innerHTML = layerSelect.innerHTML; }
+    populateLayerSelect($('#leftLayer')); populateLayerSelect($('#rightLayer'));
+    $('#leftLayer').value = initialLayerId; $('#rightLayer').value = initialLayerId;
+    $('#leftDate').value = defaultDateISO;  $('#rightDate').value = defaultDateISO;
+
+    // Init
+    setImageryLayer(layerSelect.value, dateInput.value);
+
+    // Basic bindings
+    layerSelect.addEventListener('change', () => {
+      const mode = $('#mode').value;
+      if (mode === 'view') setImageryLayer(layerSelect.value, dateInput.value);
+      if (mode === 'animate') setAnimateLayer(layerSelect.value);
+      updatePermalink();
+    });
+    dateInput.addEventListener('change', () => {
+      const d = dateInput.value || todayISO;
+      if (currentImageryLayer) currentImageryLayer.setParams({ time: d });
+      updatePermalink();
+    });
+    $('#opacity').addEventListener('input', e=>{
+      const val = parseFloat(e.target.value);
+      if (currentImageryLayer) currentImageryLayer.setOpacity(val);
+      if (leftLayer) leftLayer.setOpacity(val);
+      if (rightLayer) rightLayer.setOpacity(val);
+      if (tdLayer) tdLayer.setOpacity(val);
+    });
+    $('#toggleOSM').addEventListener('change', (e)=>{
+      if (e.target.checked) { osmBase.addTo(map); if (currentImageryLayer) currentImageryLayer.bringToFront(); if (leftLayer&&rightLayer){ leftLayer.bringToFront(); rightLayer.bringToFront(); } overlays.bringToFront(); }
+      else { map.removeLayer(osmBase); }
+    });
+    $('#snapshot').onclick = ()=>{
+      domtoimage.toPng($('#map')).then(dataUrl=>{
+        const a = Object.assign(document.createElement('a'), {href:dataUrl, download:`map_${new Date().toISOString().slice(0,10)}.png`}); a.click();
+      }).catch(()=>showToast('Snapshot failed'));
+    };
+
+    // Keyboard date step
+    function stepDate(days){
+      const d = new Date(dateInput.value || todayISO);
+      d.setUTCDate(d.getUTCDate()+days);
+      const iso = d.toISOString().slice(0,10);
+      dateInput.value = iso;
+      if (currentImageryLayer) currentImageryLayer.setParams({ time: iso });
+      if ($('#mode').value === 'compare'){
+        const dl = new Date($('#leftDate').value);  dl.setUTCDate(dl.getUTCDate()+days);  $('#leftDate').value  = dl.toISOString().slice(0,10);  leftLayer.setParams({ time: $('#leftDate').value });
+        const dr = new Date($('#rightDate').value); dr.setUTCDate(dr.getUTCDate()+days); $('#rightDate').value = dr.toISOString().slice(0,10); rightLayer.setParams({ time: $('#rightDate').value });
+      }
+      showToast(`Date: ${iso}`); updatePermalink();
+    }
+    document.addEventListener('keydown', (e)=>{ if (e.key==='[') stepDate(-1); if (e.key===']') stepDate(+1); });
+
+    // Mode switching
+    $('#mode').addEventListener('change', ()=>{
+      const m = $('#mode').value;
+      $('#compareRow1').classList.toggle('hidden', m!=='compare');
+      if (currentImageryLayer) { map.removeLayer(currentImageryLayer); currentImageryLayer = null; }
+      if (leftLayer) { map.removeLayer(leftLayer); leftLayer = null; }
+      if (rightLayer) { map.removeLayer(rightLayer); rightLayer = null; }
+      if (sbsCtrl) { map.removeControl(sbsCtrl); sbsCtrl = null; }
+      removeAnimate();
+
+      if (m === 'view') setImageryLayer(layerSelect.value, dateInput.value);
+      else if (m === 'compare') setCompareLayers($('#leftLayer').value, $('#leftDate').value, $('#rightLayer').value, $('#rightDate').value);
+      else if (m === 'animate') setAnimateLayer(layerSelect.value);
+
+      updatePermalink();
+    });
+    $('#leftLayer').addEventListener('change', ()=> setCompareLayers($('#leftLayer').value, $('#leftDate').value, $('#rightLayer').value, $('#rightDate').value));
+    $('#rightLayer').addEventListener('change', ()=> setCompareLayers($('#leftLayer').value, $('#leftDate').value, $('#rightLayer').value, $('#rightDate').value));
+    $('#leftDate').addEventListener('change', ()=> leftLayer && leftLayer.setParams({ time: $('#leftDate').value }));
+    $('#rightDate').addEventListener('change', ()=> rightLayer && rightLayer.setParams({ time: $('#rightDate').value }));
+
+    // Bookmarks
+    const bmKey = 'oeo_bookmarks_v1';
+    const bmLoadSel = $('#bm-load');
+    function loadBookmarks(){
+      const arr = JSON.parse(localStorage.getItem(bmKey) || '[]');
+      bmLoadSel.innerHTML = '<option value="">Load…</option>';
+      arr.forEach((b, i)=>{ const opt = document.createElement('option'); opt.value = i; opt.textContent = b.name; bmLoadSel.appendChild(opt); });
+      return arr;
+    }
+    function saveBookmark(){
+      const arr = loadBookmarks();
+      const name = ($('#bm-name').value || `View ${arr.length+1}`).trim();
+      const mode = $('#mode').value;
+      const data = {
+        name, mode,
+        center: map.getCenter(), zoom: map.getZoom(),
+        single: { layer: layerSelect.value, date: dateInput.value },
+        compare: {
+          left:  { layer: $('#leftLayer').value,  date: $('#leftDate').value },
+          right: { layer: $('#rightLayer').value, date: $('#rightDate').value }
+        }
+      };
+      arr.push(data); localStorage.setItem(bmKey, JSON.stringify(arr));
+      loadBookmarks(); $('#bm-name').value='';
+      showToast(`Saved bookmark: ${name}`);
+    }
+    function applyBookmark(b){
+      map.setView(b.center, b.zoom);
+      $('#mode').value = b.mode; $('#mode').dispatchEvent(new Event('change'));
+      if (b.mode === 'view'){
+        layerSelect.value = b.single.layer; dateInput.value = b.single.date;
+        setImageryLayer(layerSelect.value, dateInput.value);
+      } else if (b.mode === 'compare'){
+        $('#leftLayer').value  = b.compare.left.layer;  $('#leftDate').value  = b.compare.left.date;
+        $('#rightLayer').value = b.compare.right.layer; $('#rightDate').value = b.compare.right.date;
+        setCompareLayers($('#leftLayer').value, $('#leftDate').value, $('#rightLayer').value, $('#rightDate').value);
+      } else if (b.mode === 'animate'){
+        layerSelect.value = b.single.layer; setAnimateLayer(layerSelect.value);
+      }
+    }
+    loadBookmarks();
+    $('#bm-save').addEventListener('click', saveBookmark);
+    bmLoadSel.addEventListener('change', ()=>{
+      const arr = loadBookmarks();
+      const idx = parseInt(bmLoadSel.value,10);
+      if (!isNaN(idx) && arr[idx]) applyBookmark(arr[idx]);
+      bmLoadSel.value = '';
+    });
+
+    // Permalink (mode/layers/dates)
+    function updatePermalink(){
+      const p = new URLSearchParams(window.location.search);
+      p.set('mode', $('#mode').value);
+      p.set('layer', layerSelect.value);
+      p.set('date', dateInput.value);
+      p.set('lLayer', $('#leftLayer').value); p.set('lDate',  $('#leftDate').value);
+      p.set('rLayer', $('#rightLayer').value); p.set('rDate',  $('#rightDate').value);
+      history.replaceState(null,'','?'+p.toString()+location.hash);
+    }
+    (function restoreFromQuery(){
+      const qp = new URLSearchParams(location.search);
+      const mode = qp.get('mode');
+      if (mode) $('#mode').value = mode;
+      if (qp.get('layer')) layerSelect.value = qp.get('layer');
+      if (qp.get('date'))  dateInput.value  = qp.get('date');
+      if (qp.get('lLayer')) $('#leftLayer').value = qp.get('lLayer');
+      if (qp.get('lDate'))  $('#leftDate').value  = qp.get('lDate');
+      if (qp.get('rLayer')) $('#rightLayer').value = qp.get('rLayer');
+      if (qp.get('rDate'))  $('#rightDate').value  = qp.get('rDate');
+
+      $('#mode').dispatchEvent(new Event('change'));
+      if (mode === 'view' || !mode) setImageryLayer(layerSelect.value, dateInput.value);
+      if (mode === 'compare') setCompareLayers($('#leftLayer').value, $('#leftDate').value, $('#rightLayer').value, $('#rightDate').value);
+      if (mode === 'animate') setAnimateLayer(layerSelect.value);
+    })();
+
+    // --- NEW: Dynamic thematic layers from GetCapabilities -------------------
+    const thematicKeywords = [
+      /Fire|Thermal Anomalies|Fires/i,
+      /Snow|Ice/i,
+      /Aerosol|Optical Depth|AOD/i,
+      /Night Lights|VIIRS Night/i,
+      /Chlorophyll|Ocean Color|SST|Sea Surface/i
+    ];
+    async function populateThematic(){
+      try{
+        const url = GIBS_WMS + 'SERVICE=WMS&REQUEST=GetCapabilities';
+        const res = await fetch(url);
+        const text = await res.text();
+        const xml = new window.DOMParser().parseFromString(text, 'application/xml');
+        const layers = Array.from(xml.getElementsByTagName('Layer')).filter(n => n.getElementsByTagName('Name')[0]);
+        const candidates = [];
+        for (const Lyr of layers){
+          const name = Lyr.getElementsByTagName('Name')[0]?.textContent || '';
+          const title = Lyr.getElementsByTagName('Title')[0]?.textContent || name;
+          if (!name || /TrueColor/i.test(name)) continue; // TrueColor already listed
+          const str = `${name} ${title}`;
+          if (thematicKeywords.some(rx => rx.test(str))) {
+            candidates.push({name, title});
+          }
+        }
+        // Deduplicate by name, sort by title
+        const seen = new Set(), list = [];
+        for (const c of candidates){ if (!seen.has(c.name)){ seen.add(c.name); list.push(c); } }
+        list.sort((a,b)=>a.title.localeCompare(b.title));
+
+        const group = $('#thematicGroup');
+        list.slice(0, 40).forEach(c=>{
+          const opt = document.createElement('option'); opt.value = c.name; opt.textContent = c.title;
+          group.appendChild(opt);
+        });
+
+        // Also sync compare selects
+        populateLayerSelect($('#leftLayer'));
+        populateLayerSelect($('#rightLayer'));
+      } catch(err){
+        console.warn('Capabilities fetch failed', err);
+      }
+    }
+    populateThematic();
+
+    // --- NEW: Auto legend ----------------------------------------------------
+    async function updateLegend(layerId){
+      const box = $('#legendBox'), img = $('#legendImg');
+      if (!layerId || /TrueColor/i.test(layerId)) { box.style.display='none'; img.src=''; return; }
+      const url = GIBS_WMS + `SERVICE=WMS&REQUEST=GetLegendGraphic&FORMAT=image/png&LAYER=${encodeURIComponent(layerId)}`;
+      img.onerror = ()=>{ box.style.display='none'; };
+      img.onload = ()=>{ box.style.display='block'; };
+      img.src = url;
+    }
+
+    // --- NEW: AOI analysis (RGB histogram & time series) --------------------
+    const histCtx = $('#histRGB').getContext('2d');
+    const tsCtx = $('#tsChart').getContext('2d');
+    let histChart = null, tsChart = null;
+
+    function getActivePolygon(){
+      let poly = null;
+      drawnItems.eachLayer(l=>{ if (!poly && (l instanceof L.Polygon || l instanceof L.Rectangle)) poly = l; });
+      return poly;
+    }
+
+    function pointInPolygon(pt, latlngs){ // ray casting on [lat,lng] pair
+      let x = pt[1], y = pt[0], inside = false;
+      for (let i=0,j=latlngs.length-1; i<latlngs.length; j=i++){
+        const xi = latlngs[i].lng, yi = latlngs[i].lat;
+        const xj = latlngs[j].lng, yj = latlngs[j].lat;
+        const intersect = ((yi>y)!=(yj>y)) && (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    // Sample visible tiles of currentImageryLayer within polygon (approximate)
+    async function sampleAOI(layer, polygon, bins=16){
+      return new Promise(resolve=>{
+        if (!layer) return resolve(null);
+        const latlngs = polygon.getLatLngs()[0]; // outer ring
+        const bounds = polygon.getBounds();
+        const tileSize = 256;
+        const zoom = map.getZoom();
+        const tileCoords = [];
+        // find tile range covering bounds
+        function project(lat, lng){ return map.project([lat,lng], zoom); }
+        const nw = project(bounds.getNorth(), bounds.getWest());
+        const se = project(bounds.getSouth(), bounds.getEast());
+        const x0 = Math.floor(nw.x / tileSize), y0 = Math.floor(nw.y / tileSize);
+        const x1 = Math.floor(se.x / tileSize), y1 = Math.floor(se.y / tileSize);
+        for (let x=x0; x<=x1; x++) for(let y=y0; y<=y1; y++) tileCoords.push({x,y,z:zoom});
+
+        const canvas = document.createElement('canvas'); canvas.width = tileSize; canvas.height = tileSize;
+        const ctx = canvas.getContext('2d');
+
+        const histR = new Array(bins).fill(0), histG = new Array(bins).fill(0), histB = new Array(bins).fill(0);
+        let sumR=0,sumG=0,sumB=0,count=0;
+
+        const tiles = [];
+        layer._tiles && Object.values(layer._tiles).forEach(t=>tiles.push(t)); // Leaflet caches tiles
+        const imgs = tiles.filter(t=>t.el && t.el.tagName==='IMG');
+
+        // For each cached/visible tile, draw to canvas and sample a coarse grid
+        imgs.forEach(t=>{
+          try{
+            ctx.clearRect(0,0,tileSize,tileSize);
+            ctx.drawImage(t.el, 0, 0, tileSize, tileSize);
+            const step = 8; // sampling stride (px)
+            for (let py=0; py<tileSize; py+=step){
+              for (let px=0; px<tileSize; px+=step){
+                // Convert tile pixel to LatLng
+                const worldX = t.coords.x*tileSize + px;
+                const worldY = t.coords.y*tileSize + py;
+                const latlng = map.unproject(L.point(worldX, worldY), t.coords.z);
+                if (!pointInPolygon([latlng.lat, latlng.lng], latlngs)) continue;
+
+                const data = ctx.getImageData(px, py, 1, 1).data;
+                const r=data[0], g=data[1], b=data[2];
+                const br = Math.round((r+g+b)/3);
+                sumR+=r; sumG+=g; sumB+=b; count++;
+
+                const binR = Math.floor(r/256*bins), binG = Math.floor(g/256*bins), binB = Math.floor(b/256*bins);
+                histR[Math.min(binR,bins-1)]++; histG[Math.min(binG,bins-1)]++; histB[Math.min(binB,bins-1)]++;
+              }
+            }
+          } catch(e){ /* cross-origin or not yet loaded */ }
+        });
+
+        if (!count) return resolve(null);
+        resolve({
+          mean: [sumR/count, sumG/count, sumB/count],
+          hist: {R: histR, G: histG, B: histB},
+          brightness: (sumR+sumG+sumB)/(3*count)
+        });
       });
     }
 
-    function setImageryLayer(layerId, dateISO) {
-      if (currentImageryLayer) {
-        map.removeLayer(currentImageryLayer);
-      }
-      currentImageryLayer = buildImageryLayer(layerId, dateISO);
-      currentImageryLayer.addTo(map);
+    function renderHistogram(h){
+      if (histChart) histChart.destroy();
+      const labels = [...Array(h.R.length)].map((_,i)=>i);
+      histChart = new Chart(histCtx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label:'R', data:h.R, tension:0.2, pointRadius:0 },
+            { label:'G', data:h.G, tension:0.2, pointRadius:0 },
+            { label:'B', data:h.B, tension:0.2, pointRadius:0 }
+          ]
+        },
+        options: { responsive:true, plugins:{legend:{display:true}}, scales:{x:{display:false}, y:{display:false}} }
+      });
+    }
+    function renderTimeseries(xs, ys){
+      if (tsChart) tsChart.destroy();
+      tsChart = new Chart(tsCtx, {
+        type: 'line',
+        data: { labels: xs, datasets: [{ label:'Mean brightness', data: ys, tension:0.2, pointRadius:2 }] },
+        options: { responsive:true, plugins:{legend:{display:false}}, scales:{x:{ticks:{maxRotation:0, autoSkip:true}}, y:{}} }
+      });
     }
 
-    // UI: Date picker -> update TIME parameter on WMS layer
-    const dateInput = document.getElementById('date');
-    dateInput.value = defaultDateISO;
-    dateInput.min = '2000-01-01';
-    const latestSelectableDate = todayISO < defaultDateISO ? defaultDateISO : todayISO;
-    dateInput.max = latestSelectableDate;
+    function setAOIStats(mean, brightness){
+      $('#meanRgb').textContent = mean ? `${mean.map(v=>v.toFixed(1)).join(', ')}` : '—';
+      $('#meanBright').textContent = brightness ? brightness.toFixed(1) : '—';
+    }
 
-    dateInput.addEventListener('change', (e) => {
-      const d = e.target.value || todayISO;
-      if (!currentImageryLayer) return;
-      currentImageryLayer.setParams({ time: d });
+    $('#aoiAnalyze').addEventListener('click', async ()=>{
+      const poly = getActivePolygon();
+      if (!poly) { showToast('Draw/select a polygon or rectangle first'); return; }
+      $('#aoiHint').textContent = 'Analyzing…';
+      const stats = await sampleAOI(currentImageryLayer || leftLayer || rightLayer || tdLayer, poly);
+      if (!stats){ $('#aoiHint').textContent = 'No pixels sampled (zoom in or wait tiles)'; return; }
+      setAOIStats(stats.mean, stats.brightness);
+      renderHistogram(stats.hist);
+      $('#aoiHint').textContent = 'Done';
     });
 
-    const layerSelect = document.getElementById('layer');
-    layerSelect.value = initialLayerId;
+    $('#aoiTimeseries').addEventListener('click', async ()=>{
+      const poly = getActivePolygon();
+      if (!poly) { showToast('Draw/select a polygon or rectangle first'); return; }
+      const days = Math.max(1, parseInt($('#tsDays').value||'14',10));
+      const step = Math.max(1, parseInt($('#tsStep').value||'2',10));
 
-    // Initialize first layer
-    setImageryLayer(layerSelect.value, dateInput.value);
-
-    // Keep imagery in sync when switching between layers
-    layerSelect.addEventListener('change', (e) => {
-      const dateISO = dateInput.value || todayISO;
-      setImageryLayer(e.target.value, dateISO);
+      const start = new Date(dateInput.value || todayISO);
+      const xs = [], ys = [];
+      $('#aoiHint').textContent = 'Building time series…';
+      for (let d=0; d<=days; d+=step){
+        const cur = new Date(start); cur.setUTCDate(start.getUTCDate()-d);
+        const iso = cur.toISOString().slice(0,10);
+        // Temporarily set layer time to fetch tiles
+        if (currentImageryLayer) currentImageryLayer.setParams({ time: iso });
+        await new Promise(r=>setTimeout(r, 300)); // let some tiles load
+        const stats = await sampleAOI(currentImageryLayer, poly);
+        if (stats){ xs.push(iso); ys.push(Number(stats.brightness.toFixed(1))); }
+      }
+      renderTimeseries(xs.reverse(), ys.reverse());
+      // restore selected date
+      if (currentImageryLayer) currentImageryLayer.setParams({ time: dateInput.value });
+      $('#aoiHint').textContent = 'Done';
     });
+
+    // Legend box starts hidden; updates on layer change
+    function clearLegend(){ $('#legendBox').style.display='none'; $('#legendImg').src=''; }
+
   </script>
 </body>
 </html>
