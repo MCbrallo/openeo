@@ -20,7 +20,7 @@
 
 <!-- Time & Compare -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.control.min.css">
-<script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet-timedimension.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-side-by-side@2.0.1/leaflet-side-by-side.min.js"></script>
 
 <style>
@@ -103,7 +103,7 @@
     position: fixed; right: 12px; top: 64px; bottom: 12px; width: 380px; max-width: 94vw;
     background: rgba(17,23,43,.98); backdrop-filter: blur(6px);
     border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.3);
-    display: none; z-index: 20; padding: 12px; overflow:auto;
+    display: none; z-index: 2000; padding: 12px; overflow:auto;  /* ↑ ensure above map */
   }
   .learn-drawer.open { display:block; }
   .learn-drawer h3 { margin: 6px 0; }
@@ -113,7 +113,7 @@
   .kbd { background:#0c1636; border:1px solid #263b80; padding:1px 6px; border-radius:6px; font-size:12px; }
 
   /* Learn Modal */
-  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index:30; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index: 10000; } /* ↑ put modal above Leaflet panes */
   .modal.open { display:flex; }
   .modal .modal-body {
     width: min(900px, 95vw); max-height: 90vh; overflow:auto;
@@ -231,6 +231,10 @@
     <section id="tab-animate" class="tab-content">
       <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>, then play.</p>
       <div class="form">
+        <div class="row">
+          <label for="animFilter">Find mode</label>
+          <input type="text" id="animFilter" placeholder="type to filter…">
+        </div>
         <div class="row">
           <label for="animLayer">Layer</label>
           <select id="animLayer"></select>
@@ -355,25 +359,52 @@ map.on(L.Draw.Event.CREATED, e=>{
 });
 
 /* ==========================
-   Catalog (auto) + Grouping
+   Catalog (auto) + Grouping + Popular top-10
    ========================== */
 const groups = {
+  "Popular": [], /* filled after fetch */
   "True Color": [ /TrueColor/i ],
-  "Infrared (IR)": [ /IR|Infrared|Brightness_Temp/i ],
+  "Infrared (IR)": [ /IR|Infrared|Brightness[_ ]?Temp/i ],
   "Fires/Hotspots": [ /Fire|Fires|Thermal Anomalies/i ],
-  "Snow & Ice": [ /Snow|Ice|Sea_Ice|SC|SIC/i ],
+  "Snow & Ice": [ /Snow|Ice|Sea[_ ]?Ice|SIC/i ],
   "Aerosol/Atmosphere": [ /Aerosol|AOD|SO2|NO2|Ozone|CO Total Column/i ],
   "Night Lights": [ /Night|DNB|Nighttime/i ],
   "Ocean/SST/Color": [ /SST|Chlorophyll|Ocean|Sea Surface/i ],
   "Other": [ /.*/ ]
 };
 let catalogList = []; // {name, title, group}
+let popularList = []; // up to 10 items
+
 function matchGroup(titleOrName){
   for (const [g, regs] of Object.entries(groups)){
+    if (g === 'Popular') continue;
     if (regs.some(rx => rx.test(titleOrName))) return g;
   }
   return "Other";
 }
+function buildPopular(list){
+  // heuristic keywords to pick 10 common modes
+  const wanted = [
+    /NOAA.?20.*True.*Color/i,
+    /SNPP.*True.*Color/i,
+    /MODIS.*Terra.*True.*Color/i,
+    /Thermal.*Anomalies|Fires.*375m/i,
+    /Snow.*Cover/i,
+    /Sea.*Ice.*Concentration/i,
+    /Night.*(Lights|Night.?Band|DNB)/i,
+    /Aerosol|AOD/i,
+    /Sea.*Surface.*Temperature|SST/i,
+    /Infrared|Brightness.*Temp/i
+  ];
+  const picks = [];
+  for (const rx of wanted){
+    const found = list.find(it => rx.test(it.title) || rx.test(it.name));
+    if (found && !picks.some(p => p.name === found.name)) picks.push(found);
+    if (picks.length >= 10) break;
+  }
+  return picks;
+}
+
 async function populateCatalog(){
   try{
     const url = GIBS_WMS + 'SERVICE=WMS&REQUEST=GetCapabilities';
@@ -393,9 +424,14 @@ async function populateCatalog(){
     const seen = new Set(); catalogList = [];
     list.forEach(item => { if (!seen.has(item.name)){ seen.add(item.name); catalogList.push(item); } });
     catalogList.sort((a,b)=> (a.group===b.group) ? a.title.localeCompare(b.title) : a.group.localeCompare(b.group));
+
+    // Popular
+    popularList = buildPopular(catalogList);
+
     renderCatalog();
     // Seed compare & animate selects
-    cloneCatalogTo($('#leftLayer')); cloneCatalogTo($('#rightLayer')); cloneCatalogTo($('#animLayer'));
+    syncCompareAnimateSelects();
+
     // Preselect baseline
     $('#date').value = defaultDateISO;
     setStackBase('VIIRS_NOAA20_CorrectedReflectance_TrueColor', defaultDateISO);
@@ -405,8 +441,19 @@ async function populateCatalog(){
 }
 function renderCatalog(){
   const sel = $('#catalog'); sel.innerHTML = '';
+  // Popular group first (if any)
+  if (popularList.length){
+    const og = document.createElement('optgroup'); og.label = 'Popular';
+    popularList.forEach(item=>{
+      const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title;
+      og.appendChild(opt);
+    });
+    sel.appendChild(og);
+  }
+  // Then the rest grouped
   let currentGroup = null;
   catalogList.forEach(item=>{
+    if (popularList.some(p=>p.name===item.name)) return; // skip if already in Popular
     if (item.group !== currentGroup){
       const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
       currentGroup = item.group;
@@ -419,22 +466,47 @@ function renderCatalog(){
 $('#catalogFilter').addEventListener('input', ()=>{
   const q = $('#catalogFilter').value.toLowerCase();
   const sel = $('#catalog'); sel.innerHTML = '';
+  // Filter Popular
+  const pop = popularList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
+  if (pop.length){
+    const og = document.createElement('optgroup'); og.label='Popular';
+    pop.forEach(item=>{ const opt=document.createElement('option'); opt.value=item.name; opt.textContent=item.title; og.appendChild(opt); });
+    sel.appendChild(og);
+  }
+  // Filter others by group
   let current = null;
-  catalogList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q)).forEach(item=>{
-    if (item.group !== current){
-      const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
-      current = item.group;
-    }
-    const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title;
-    sel.lastChild.appendChild(opt);
-  });
+  catalogList.filter(it => !popularList.some(p=>p.name===it.name))
+    .filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q))
+    .forEach(item=>{
+      if (item.group !== current){
+        const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
+        current = item.group;
+      }
+      const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title;
+      sel.lastChild.appendChild(opt);
+    });
 });
 function cloneCatalogTo(selectEl){
+  // Build with Popular group on top
   const tmp = document.createElement('select');
-  renderCatalog(); // ensure fresh
-  tmp.innerHTML = $('#catalog').innerHTML;
+  // Popular
+  if (popularList.length){
+    const og = document.createElement('optgroup'); og.label='Popular';
+    popularList.forEach(item=>{ const o=document.createElement('option'); o.value=item.name; o.textContent=item.title; og.appendChild(o); });
+    tmp.appendChild(og);
+  }
+  // Rest
+  let current = null;
+  catalogList.forEach(item=>{
+    if (popularList.some(p=>p.name===item.name)) return;
+    if (item.group !== current){
+      const optg = document.createElement('optgroup'); optg.label = item.group; tmp.appendChild(optg);
+      current = item.group;
+    }
+    const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title; tmp.lastChild.appendChild(opt);
+  });
   selectEl.innerHTML = tmp.innerHTML;
-  // Default picks
+  // Default pick: NOAA-20 True Color if present
   const def = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
   if ([...selectEl.options].some(o=>o.value===def)) selectEl.value=def;
 }
@@ -456,13 +528,12 @@ function legendURL(layerId){
 /* ==========================
    Layer Stack (Explore)
    ========================== */
-const stackState = []; // [{id, title, layer, opacity, visible}]
+const stackState = []; // [{id, title, layer, opacity, visible, date}]
 function setStackBase(layerId, dateISO){
-  // ensure at least one base (True Color)
   addLayerToStack(layerId, dateISO);
 }
 function addLayerToStack(layerId, dateISO){
-  const meta = catalogList.find(x=>x.name===layerId) || {title:layerId};
+  const meta = catalogList.find(x=>x.name===layerId) || popularList.find(x=>x.name===layerId) || {title:layerId};
   const layer = buildWMS(layerId, dateISO).addTo(map);
   layer.setOpacity(1);
   stackState.push({ id: layerId, title: meta.title, layer, opacity:1, visible:true, date: dateISO || todayISO });
@@ -473,7 +544,7 @@ function addLayerToStack(layerId, dateISO){
 function renderStack(){
   const c = $('#stack'); c.innerHTML='';
   stackState.slice().reverse().forEach((item, idxReverse)=>{
-    const idx = stackState.length-1-idxReverse; // true index
+    const idx = stackState.length-1-idxReverse;
     const el = document.createElement('div'); el.className='stack-item';
 
     const top = document.createElement('div'); top.className='row-top';
@@ -508,12 +579,10 @@ function renderStack(){
     c.appendChild(el);
   });
 
-  // Ensure draw and overlays top
   overlays.bringToFront();
   drawnItems.bringToFront();
 }
 function readdAll(){
-  // remove all, then re-add in order
   stackState.forEach(s=>{ if (map.hasLayer(s.layer)) map.removeLayer(s.layer); });
   stackState.forEach(s=>{ if (s.visible) s.layer.addTo(map); s.layer.setOpacity(s.opacity); });
   renderStack();
@@ -525,13 +594,11 @@ $('#addToStack').addEventListener('click', ()=>{
   addLayerToStack(val, $('#date').value || todayISO);
 });
 $('#date').addEventListener('change', ()=>{
-  // convenience: update topmost visible layer date
   for (let i=stackState.length-1; i>=0; i--){
     if (stackState[i].visible) { stackState[i].date = $('#date').value; stackState[i].layer.setParams({time: stackState[i].date}); break; }
   }
 });
 $('#globalOpacity').addEventListener('input', ()=>{
-  // convenience: set opacity on topmost visible layer
   for (let i=stackState.length-1; i>=0; i--){
     if (stackState[i].visible){ stackState[i].opacity = parseFloat($('#globalOpacity').value); stackState[i].layer.setOpacity(stackState[i].opacity); renderStack(); break; }
   }
@@ -562,10 +629,14 @@ function syncCompareAnimateSelects(){
   cloneCatalogTo($('#rightLayer'));
   cloneCatalogTo($('#animLayer'));
   $('#leftDate').value = defaultDateISO; $('#rightDate').value = defaultDateISO;
+  $('#animStart').value = defaultDateISO; $('#animEnd').value = defaultDateISO;
 }
 
 /* ==========================
-   Animate (custom controller)
+   Animate (custom controller) — FIXES:
+   - Always uses the layer selected in Animate (independent of Explore)
+   - Renders on top and brings to front on Play
+   - Adds search filter for modes
    ========================== */
 let animTimer=null, animFrames=[], animIndex=0, animForward=true, animLayer=null;
 
@@ -581,24 +652,28 @@ function buildFrames(startISO, endISO, step, units){
     else if (units==='seconds') d.setUTCSeconds(d.getUTCSeconds()+step);
   };
   while (cur <= end){
-    frames.push(cur.toISOString().slice(0,10)); // daily timestamps enough for WMS time (most GIBS are daily)
+    frames.push(cur.toISOString().slice(0,10)); // daily granularity for most WMS
     add(cur, step, units);
   }
   return frames.length ? frames : [startISO];
 }
 function ensureAnimLayer(){
+  // Always use Animate's selected layer, independent of Explore/Stack
+  const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
   if (animLayer){ map.removeLayer(animLayer); animLayer=null; }
-  animLayer = buildWMS($('#animLayer').value, $('#animStart').value).addTo(map);
+  animLayer = buildWMS(layerId, $('#animStart').value || defaultDateISO).addTo(map);
+  animLayer.bringToFront(); // ensure visibility even if stacks exist
+  overlays.bringToFront(); drawnItems.bringToFront();
 }
 function applyFrame(i){
   animIndex = i;
   const t = animFrames[animIndex];
-  if (animLayer) animLayer.setParams({time: t});
+  if (animLayer) { animLayer.setParams({time: t}); animLayer.bringToFront(); }
   $('#animCurrent').textContent = t;
   $('#animProgress').value = Math.round(100 * (animIndex+1) / animFrames.length);
 }
 function play(){
-  if (!animFrames.length){ showToast('Set start/end and press Play again'); return; }
+  if (!animFrames.length){ showToast('Set start/end and press Play'); return; }
   if (!animLayer) ensureAnimLayer();
   clearInterval(animTimer);
   const delay = Math.max(50, parseInt($('#animSpeed').value||'500',10));
@@ -634,6 +709,27 @@ $('#animPause').addEventListener('click', pause);
 $('#animStepFwd').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
 $('#animStepBack').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
 
+/* Animate mode filter (search for modes) */
+$('#animFilter').addEventListener('input', ()=>{
+  const q = $('#animFilter').value.toLowerCase();
+  const sel = $('#animLayer'); sel.innerHTML = '';
+  // Popular filtered first
+  const pop = popularList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
+  if (pop.length){
+    const og = document.createElement('optgroup'); og.label='Popular';
+    pop.forEach(it=>{ const o=document.createElement('option'); o.value=it.name; o.textContent=it.title; og.appendChild(o); });
+    sel.appendChild(og);
+  }
+  // Rest filtered
+  let current=null;
+  catalogList.filter(it => !popularList.some(p=>p.name===it.name))
+    .filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q))
+    .forEach(it=>{
+      if (it.group !== current){ const optg=document.createElement('optgroup'); optg.label=it.group; sel.appendChild(optg); current=it.group; }
+      const o=document.createElement('option'); o.value=it.name; o.textContent=it.title; sel.lastChild.appendChild(o);
+    });
+});
+
 /* Keyboard shortcuts for animation */
 document.addEventListener('keydown', (e)=>{
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
@@ -646,7 +742,7 @@ document.addEventListener('keydown', (e)=>{
 });
 
 /* ==========================
-   Learn Drawer + Modal
+   Learn Drawer + Modal (z-index fix applied in CSS)
    ========================== */
 const LEARN_HTML = `
 <div class="learn-section" id="sec-sat">
@@ -664,17 +760,17 @@ const LEARN_HTML = `
     <li><b>Fires/Hotspots</b>: active fire detections.</li>
     <li><b>Snow & Ice</b>: snow cover, sea ice concentration/extent.</li>
     <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone — haze & pollution.</li>
-    <li><b>Night Lights</b>: nighttime lights (city power outages, activity).</li>
-    <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll, fronts.</li>
+    <li><b>Night Lights</b>: nighttime lights (DNB).</li>
+    <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tools">
   <h4>When to use each Tool</h4>
   <ul>
-    <li><b>Explore</b>: build a multi-layer view; tweak per-layer date/opacity; reorder layers.</li>
+    <li><b>Explore</b>: build a multi-layer view; per-layer date/opacity; reorder layers.</li>
     <li><b>Compare</b>: swipe left/right dates/layers to see change.</li>
-    <li><b>Animate</b>: time-lapse between start→end with step units (weeks/days/hours/mins/secs).</li>
-    <li><b>Analyze</b>: draw polygons/rectangles, export/import AOIs; snapshot.</li>
+    <li><b>Animate</b>: time-lapse between start→end with step units.</li>
+    <li><b>Analyze</b>: draw AOIs; export/import GeoJSON; snapshot.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tips">
@@ -683,7 +779,6 @@ const LEARN_HTML = `
     <li>Not all layers have data every day; step a day if tiles fail.</li>
     <li>Legends vary by layer; click “Legend” in stack items.</li>
     <li>Stacks: place True Color at bottom, thematic overlays above.</li>
-    <li>Animation: daily cadence for many products; infra-daily depends on layer.</li>
   </ul>
 </div>
 `;
@@ -705,7 +800,7 @@ $('#openLearn').addEventListener('click', ()=>toggleLearn());
 $('#closeLearn').addEventListener('click', ()=>toggleLearn(false));
 document.addEventListener('keydown', (e)=>{ if (e.key==='?' && !e.ctrlKey && !e.metaKey) toggleLearn(); if (e.key==='Escape') toggleLearn(false); });
 
-// Modal
+// Modal (z-index fixed via CSS)
 $('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'));
 $('#closeLearnModal').addEventListener('click', ()=>$('#learnModal').classList.remove('open'));
 $('#learnModal').addEventListener('click', (e)=>{ if (e.target.id==='learnModal') $('#learnModal').classList.remove('open'); });
@@ -782,7 +877,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 /* ==========================
    Init
    ========================== */
-populateCatalog().then(syncCompareAnimateSelects);
+populateCatalog();
 </script>
 </body>
 </html>
