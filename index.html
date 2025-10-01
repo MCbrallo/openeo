@@ -20,8 +20,12 @@
 
 <!-- Time & Compare -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.control.min.css">
-<script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet-timedimension.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-timedimension@1.1.0/dist/leaflet.timedimension.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-side-by-side@2.0.1/leaflet-side-by-side.min.js"></script>
+
+<!-- GIF export (client-side) -->
+<script src="https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.worker.js"></script>
 
 <style>
   :root {
@@ -50,6 +54,7 @@
   header {
     grid-area: header; display:flex; align-items:center; justify-content:space-between;
     padding: 0 14px; background: #0e1630; border-bottom: 1px solid var(--line);
+    z-index: 3;
   }
   header .title { display:flex; gap:10px; align-items:center; }
   header .title h1 { font-size: 16px; margin:0; }
@@ -69,7 +74,7 @@
   .panel h2 { font-size: 13px; letter-spacing:.02em; margin: 8px 0 6px; color: #cfe0ff; text-transform: uppercase; }
   .panel .muted { color: var(--muted); }
   .panel .hr { height:1px; background:var(--line); margin:10px 0; }
-  .left { grid-area: left; overflow:auto; }
+  .left { grid-area: left; overflow:auto; z-index: 2; }
 
   /* Tabs */
   .tabs { display:flex; gap:6px; margin-bottom:6px; position: sticky; top: 0; background:var(--panel); padding-bottom: 6px; z-index: 2; }
@@ -89,21 +94,21 @@
     background:#0f1730; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px;
   }
   input[type="range"] { width: 150px; }
-  .help { font-size:12px; color:var(--muted); }
+  .help { font-size:12px; color: var(--muted); }
   .chip { display:inline-block; padding:2px 6px; border-radius:999px; background:#142349; color:#cde1ff; font-size:12px; }
 
   /* Map */
-  #map { grid-area: map; height: 100%; width: 100%; }
+  #map { grid-area: map; height: 100%; width: 100%; position: relative; z-index: 1; }
   .legend { background:#0f1730; border:1px solid var(--line); border-radius:8px; padding:8px; text-align:center; }
   .legend img { max-width:100%; height:auto; }
 
-  /* Learn Drawer */
+  /* Learn Drawer & Modal — force above everything (even Leaflet panes) */
   .learn-toggle { margin-left: 6px; }
   .learn-drawer {
     position: fixed; right: 12px; top: 64px; bottom: 12px; width: 380px; max-width: 94vw;
     background: rgba(17,23,43,.98); backdrop-filter: blur(6px);
     border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.3);
-    display: none; z-index: 2000; padding: 12px; overflow:auto;  /* ↑ ensure above map */
+    display: none; z-index: 2000000000; padding: 12px; overflow:auto;
   }
   .learn-drawer.open { display:block; }
   .learn-drawer h3 { margin: 6px 0; }
@@ -112,8 +117,8 @@
   .learn-section h4 { margin:4px 0 6px; }
   .kbd { background:#0c1636; border:1px solid #263b80; padding:1px 6px; border-radius:6px; font-size:12px; }
 
-  /* Learn Modal */
-  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; z-index: 10000; } /* ↑ put modal above Leaflet panes */
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center;
+           z-index: 2147483647; } /* max 32-bit int to beat any map pane */
   .modal.open { display:flex; }
   .modal .modal-body {
     width: min(900px, 95vw); max-height: 90vh; overflow:auto;
@@ -139,7 +144,22 @@
     padding: 8px 10px; background: rgba(0,0,0,.85); color: #fff; border-radius: 8px; display:none;
   }
 
-  /* Mobile stacks left panel below map */
+  /* Animation preload overlay + canvas player */
+  .preload-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.75);
+    display: none; align-items: center; justify-content: center; flex-direction: column;
+    color: #fff; z-index: 2000000001;
+  }
+  .preload-overlay.open { display:flex; }
+  .preload-box {
+    background: #0e1630; border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 300px; text-align: center;
+  }
+  #animCanvas {
+    position: absolute; inset: 0; margin: auto; pointer-events: none;
+    z-index: 5000; /* above map, below learn modal */
+  }
+
+  /* Mobile */
   @media (max-width: 1000px) {
     .app {
       grid-template-columns: 1fr; grid-template-rows: 56px 1fr auto;
@@ -155,7 +175,7 @@
 <div class="app">
   <header>
     <div class="title">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="#65b1ff" aria-hidden="true"><circle cx="12" cy="12" r="10" opacity=".2"/><path d="M12 4a 8 8 0 0 1 7.14 4.44L12 13 4.86 8.44A8 8 0 0 1 12 4Z"/></svg>
       <h1>Open EO Viewer</h1>
       <span class="muted">Explore • Compare • Animate • Analyze</span>
       <button class="btn icon learn-toggle" id="openLearn">?</button>
@@ -229,7 +249,7 @@
 
     <!-- Animate -->
     <section id="tab-animate" class="tab-content">
-      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>, then play.</p>
+      <p class="help">Animate any layer (True Color, Infrared, Fires, Snow/Ice, AOD, Night Lights…). Choose <b>start/end</b>, <b>step</b> and <b>units</b>. Use <b>Prebuild</b> for smooth playback and GIF export.</p>
       <div class="form">
         <div class="row">
           <label for="animFilter">Find mode</label>
@@ -259,10 +279,12 @@
           <label><input type="checkbox" id="animPingPong"> Ping-Pong</label>
         </div>
         <div class="row">
+          <button class="btn" id="animPrebuild">Prebuild</button>
           <button class="btn primary" id="animPlay">Play</button>
           <button class="btn" id="animPause">Pause</button>
           <button class="btn ghost" id="animStepBack">← Step</button>
           <button class="btn ghost" id="animStepFwd">Step →</button>
+          <button class="btn" id="animDownloadGIF" disabled>Download GIF</button>
         </div>
         <div class="row">
           <progress id="animProgress" value="0" max="100" style="width:100%"></progress>
@@ -287,7 +309,10 @@
   </aside>
 
   <!-- Map -->
-  <main id="map"></main>
+  <main id="map">
+    <!-- Canvas player for prebuilt animation -->
+    <canvas id="animCanvas"></canvas>
+  </main>
 </div>
 
 <!-- Learn Drawer -->
@@ -309,6 +334,14 @@
       <button class="btn" id="closeLearnModal">Close</button>
     </div>
     <div id="learnModalContent"></div>
+  </div>
+</div>
+
+<!-- Preload overlay -->
+<div class="preload-overlay" id="preloadOverlay">
+  <div class="preload-box">
+    <div id="preloadText">Preparing frames…</div>
+    <progress id="preloadProgress" value="0" max="100" style="width:100%; margin-top:10px;"></progress>
   </div>
 </div>
 
@@ -362,7 +395,7 @@ map.on(L.Draw.Event.CREATED, e=>{
    Catalog (auto) + Grouping + Popular top-10
    ========================== */
 const groups = {
-  "Popular": [], /* filled after fetch */
+  "Popular": [],
   "True Color": [ /TrueColor/i ],
   "Infrared (IR)": [ /IR|Infrared|Brightness[_ ]?Temp/i ],
   "Fires/Hotspots": [ /Fire|Fires|Thermal Anomalies/i ],
@@ -373,7 +406,7 @@ const groups = {
   "Other": [ /.*/ ]
 };
 let catalogList = []; // {name, title, group}
-let popularList = []; // up to 10 items
+let popularList = [];
 
 function matchGroup(titleOrName){
   for (const [g, regs] of Object.entries(groups)){
@@ -383,7 +416,6 @@ function matchGroup(titleOrName){
   return "Other";
 }
 function buildPopular(list){
-  // heuristic keywords to pick 10 common modes
   const wanted = [
     /NOAA.?20.*True.*Color/i,
     /SNPP.*True.*Color/i,
@@ -420,19 +452,14 @@ async function populateCatalog(){
       const g = matchGroup(`${name} ${title}`);
       list.push({ name, title, group: g });
     }
-    // Deduplicate & sort
     const seen = new Set(); catalogList = [];
     list.forEach(item => { if (!seen.has(item.name)){ seen.add(item.name); catalogList.push(item); } });
     catalogList.sort((a,b)=> (a.group===b.group) ? a.title.localeCompare(b.title) : a.group.localeCompare(b.group));
 
-    // Popular
     popularList = buildPopular(catalogList);
 
     renderCatalog();
-    // Seed compare & animate selects
     syncCompareAnimateSelects();
-
-    // Preselect baseline
     $('#date').value = defaultDateISO;
     setStackBase('VIIRS_NOAA20_CorrectedReflectance_TrueColor', defaultDateISO);
   } catch(e){
@@ -441,7 +468,6 @@ async function populateCatalog(){
 }
 function renderCatalog(){
   const sel = $('#catalog'); sel.innerHTML = '';
-  // Popular group first (if any)
   if (popularList.length){
     const og = document.createElement('optgroup'); og.label = 'Popular';
     popularList.forEach(item=>{
@@ -450,10 +476,9 @@ function renderCatalog(){
     });
     sel.appendChild(og);
   }
-  // Then the rest grouped
   let currentGroup = null;
   catalogList.forEach(item=>{
-    if (popularList.some(p=>p.name===item.name)) return; // skip if already in Popular
+    if (popularList.some(p=>p.name===item.name)) return;
     if (item.group !== currentGroup){
       const optg = document.createElement('optgroup'); optg.label = item.group; sel.appendChild(optg);
       currentGroup = item.group;
@@ -466,14 +491,12 @@ function renderCatalog(){
 $('#catalogFilter').addEventListener('input', ()=>{
   const q = $('#catalogFilter').value.toLowerCase();
   const sel = $('#catalog'); sel.innerHTML = '';
-  // Filter Popular
   const pop = popularList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
   if (pop.length){
     const og = document.createElement('optgroup'); og.label='Popular';
     pop.forEach(item=>{ const opt=document.createElement('option'); opt.value=item.name; opt.textContent=item.title; og.appendChild(opt); });
     sel.appendChild(og);
   }
-  // Filter others by group
   let current = null;
   catalogList.filter(it => !popularList.some(p=>p.name===it.name))
     .filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q))
@@ -487,15 +510,12 @@ $('#catalogFilter').addEventListener('input', ()=>{
     });
 });
 function cloneCatalogTo(selectEl){
-  // Build with Popular group on top
   const tmp = document.createElement('select');
-  // Popular
   if (popularList.length){
     const og = document.createElement('optgroup'); og.label='Popular';
     popularList.forEach(item=>{ const o=document.createElement('option'); o.value=item.name; o.textContent=item.title; og.appendChild(o); });
     tmp.appendChild(og);
   }
-  // Rest
   let current = null;
   catalogList.forEach(item=>{
     if (popularList.some(p=>p.name===item.name)) return;
@@ -506,7 +526,6 @@ function cloneCatalogTo(selectEl){
     const opt = document.createElement('option'); opt.value=item.name; opt.textContent=item.title; tmp.lastChild.appendChild(opt);
   });
   selectEl.innerHTML = tmp.innerHTML;
-  // Default pick: NOAA-20 True Color if present
   const def = 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
   if ([...selectEl.options].some(o=>o.value===def)) selectEl.value=def;
 }
@@ -516,7 +535,7 @@ function cloneCatalogTo(selectEl){
    ========================== */
 function buildWMS(layerId, dateISO){
   return L.tileLayer.wms(GIBS_WMS, {
-    layers: layerId, format:'image/png', // png to preserve transparency for stacks
+    layers: layerId, format:'image/png',
     transparent:true, version:'1.3.0',
     time: dateISO || todayISO, crossOrigin:'anonymous'
   });
@@ -529,15 +548,13 @@ function legendURL(layerId){
    Layer Stack (Explore)
    ========================== */
 const stackState = []; // [{id, title, layer, opacity, visible, date}]
-function setStackBase(layerId, dateISO){
-  addLayerToStack(layerId, dateISO);
-}
+function setStackBase(layerId, dateISO){ addLayerToStack(layerId, dateISO); }
 function addLayerToStack(layerId, dateISO){
   const meta = catalogList.find(x=>x.name===layerId) || popularList.find(x=>x.name===layerId) || {title:layerId};
   const layer = buildWMS(layerId, dateISO).addTo(map);
   layer.setOpacity(1);
   stackState.push({ id: layerId, title: meta.title, layer, opacity:1, visible:true, date: dateISO || todayISO });
-  overlays.bringToFront();
+  overlays.bringToFront(); drawnItems.bringToFront();
   renderStack();
   showToast(`Added: ${meta.title}`);
 }
@@ -579,8 +596,7 @@ function renderStack(){
     c.appendChild(el);
   });
 
-  overlays.bringToFront();
-  drawnItems.bringToFront();
+  overlays.bringToFront(); drawnItems.bringToFront();
 }
 function readdAll(){
   stackState.forEach(s=>{ if (map.hasLayer(s.layer)) map.removeLayer(s.layer); });
@@ -633,10 +649,7 @@ function syncCompareAnimateSelects(){
 }
 
 /* ==========================
-   Animate (custom controller) — FIXES:
-   - Always uses the layer selected in Animate (independent of Explore)
-   - Renders on top and brings to front on Play
-   - Adds search filter for modes
+   Animate (A) — simple live mode (unchanged behavior)
    ========================== */
 let animTimer=null, animFrames=[], animIndex=0, animForward=true, animLayer=null;
 
@@ -652,18 +665,16 @@ function buildFrames(startISO, endISO, step, units){
     else if (units==='seconds') d.setUTCSeconds(d.getUTCSeconds()+step);
   };
   while (cur <= end){
-    frames.push(cur.toISOString().slice(0,10)); // daily granularity for most WMS
+    frames.push(cur.toISOString().slice(0,10)); // most GIBS layers are daily
     add(cur, step, units);
   }
   return frames.length ? frames : [startISO];
 }
 function ensureAnimLayer(){
-  // Always use Animate's selected layer, independent of Explore/Stack
   const layerId = $('#animLayer').value || 'VIIRS_NOAA20_CorrectedReflectance_TrueColor';
   if (animLayer){ map.removeLayer(animLayer); animLayer=null; }
   animLayer = buildWMS(layerId, $('#animStart').value || defaultDateISO).addTo(map);
-  animLayer.bringToFront(); // ensure visibility even if stacks exist
-  overlays.bringToFront(); drawnItems.bringToFront();
+  animLayer.bringToFront(); overlays.bringToFront(); drawnItems.bringToFront();
 }
 function applyFrame(i){
   animIndex = i;
@@ -709,40 +720,172 @@ $('#animPause').addEventListener('click', pause);
 $('#animStepFwd').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.min(animFrames.length-1, animIndex+1)); });
 $('#animStepBack').addEventListener('click', ()=>{ pause(); if (!animFrames.length) return; applyFrame(Math.max(0, animIndex-1)); });
 
-/* Animate mode filter (search for modes) */
-$('#animFilter').addEventListener('input', ()=>{
-  const q = $('#animFilter').value.toLowerCase();
-  const sel = $('#animLayer'); sel.innerHTML = '';
-  // Popular filtered first
-  const pop = popularList.filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
-  if (pop.length){
-    const og = document.createElement('optgroup'); og.label='Popular';
-    pop.forEach(it=>{ const o=document.createElement('option'); o.value=it.name; o.textContent=it.title; og.appendChild(o); });
-    sel.appendChild(og);
-  }
-  // Rest filtered
-  let current=null;
-  catalogList.filter(it => !popularList.some(p=>p.name===it.name))
-    .filter(it => it.title.toLowerCase().includes(q) || it.name.toLowerCase().includes(q))
-    .forEach(it=>{
-      if (it.group !== current){ const optg=document.createElement('optgroup'); optg.label=it.group; sel.appendChild(optg); current=it.group; }
-      const o=document.createElement('option'); o.value=it.name; o.textContent=it.title; sel.lastChild.appendChild(o);
-    });
-});
+/* ==========================
+   Animate (B) — PREBUILD smooth animation + GIF
+   ========================== */
+const preloadOverlay = $('#preloadOverlay');
+const preloadText = $('#preloadText');
+const preloadProgress = $('#preloadProgress');
+const animCanvas = $('#animCanvas');
+let prebuiltFrames = []; // Image objects
+let prebuiltDelays = 500; // ms
+let prebuiltPlaying = false;
+let prebuiltTimer = null;
 
-/* Keyboard shortcuts for animation */
+function wmsGetMapURL(layerId, isoDate, size, bounds){
+  // Build a single-image WMS request for the current view (EPSG:3857)
+  const crs = 'EPSG:3857';
+  const w = size.x, h = size.y;
+  const proj = map.options.crs;
+  const sw = proj.project(bounds.getSouthWest());
+  const ne = proj.project(bounds.getNorthEast());
+  const bbox = [sw.x, sw.y, ne.x, ne.y].join(',');
+  const params = [
+    'SERVICE=WMS','VERSION=1.3.0','REQUEST=GetMap',
+    `LAYERS=${encodeURIComponent(layerId)}`,
+    'FORMAT=image/jpeg', // opaque = faster/smaller
+    'TRANSPARENT=false',
+    `CRS=${crs}`,
+    `BBOX=${bbox}`,
+    `WIDTH=${w}`,
+    `HEIGHT=${h}`,
+    `TIME=${isoDate}`
+  ].join('&');
+  return GIBS_WMS + params;
+}
+
+async function prebuildAnimation(){
+  const layerId = $('#animLayer').value;
+  const start = $('#animStart').value || defaultDateISO;
+  const end   = $('#animEnd').value   || defaultDateISO;
+  const step  = Math.max(1, parseInt($('#animStep').value||'1',10));
+  const units = $('#animUnits').value;
+  prebuiltDelays = Math.max(50, parseInt($('#animSpeed').value||'500',10));
+  const framesISO = buildFrames(start, end, step, units);
+  if (!framesISO.length){ showToast('No frames to build'); return; }
+
+  // Prepare canvas to map size
+  const size = map.getSize();
+  animCanvas.width = size.x;
+  animCanvas.height = size.y;
+
+  prebuiltFrames = [];
+  preloadOverlay.classList.add('open');
+  preloadText.textContent = 'Preparing frames…';
+  preloadProgress.value = 0;
+
+  // Load sequentially (less stress on network/CDN) with progress
+  const bounds = map.getBounds();
+  for (let i=0;i<framesISO.length;i++){
+    preloadText.textContent = `Fetching ${i+1} / ${framesISO.length} (${framesISO[i]})`;
+    const url = wmsGetMapURL(layerId, framesISO[i], size, bounds);
+    try{
+      const img = await loadImage(url);
+      prebuiltFrames.push(img);
+    }catch(e){
+      // Push a blank frame to keep timing consistent
+      const blank = document.createElement('canvas'); blank.width=size.x; blank.height=size.y;
+      prebuiltFrames.push(blank);
+    }
+    preloadProgress.value = Math.round((i+1)*100/framesISO.length);
+  }
+  preloadOverlay.classList.remove('open');
+  $('#animDownloadGIF').disabled = prebuiltFrames.length === 0;
+  showToast(`Prebuilt ${prebuiltFrames.length} frame(s)`);
+}
+
+function loadImage(src){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=>resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function drawFrameToCanvas(img){
+  const ctx = animCanvas.getContext('2d');
+  ctx.clearRect(0,0,animCanvas.width, animCanvas.height);
+  ctx.drawImage(img, 0, 0, animCanvas.width, animCanvas.height);
+}
+
+function playPrebuilt(){
+  if (!prebuiltFrames.length){ showToast('Prebuild first'); return; }
+  if (prebuiltPlaying) return;
+  prebuiltPlaying = true;
+  let idx = 0, forward = true;
+  drawFrameToCanvas(prebuiltFrames[0]);
+  prebuiltTimer = setInterval(()=>{
+    idx += forward ? 1 : -1;
+    if (idx >= prebuiltFrames.length || idx < 0){
+      if ($('#animPingPong').checked){
+        forward = !forward;
+        idx = Math.max(0, Math.min(prebuiltFrames.length-1, idx));
+      } else if ($('#animLoop').checked){
+        idx = forward ? 0 : prebuiltFrames.length-1;
+      } else {
+        pausePrebuilt(); return;
+      }
+    }
+    drawFrameToCanvas(prebuiltFrames[idx]);
+  }, prebuiltDelays);
+}
+function pausePrebuilt(){
+  prebuiltPlaying = false;
+  clearInterval(prebuiltTimer);
+  prebuiltTimer = null;
+}
+
+async function downloadGIF(){
+  if (!prebuiltFrames.length){ showToast('Prebuild first'); return; }
+  const gif = new GIF({
+    workers: 2,
+    quality: 10,
+    workerScript: 'https://cdn.jsdelivr.net/npm/gif.js.optimized@0.2.0/dist/gif.worker.js'
+  });
+  const off = document.createElement('canvas');
+  off.width = animCanvas.width; off.height = animCanvas.height;
+  const ctx = off.getContext('2d');
+
+  for (const img of prebuiltFrames){
+    ctx.clearRect(0,0,off.width, off.height);
+    ctx.drawImage(img, 0, 0, off.width, off.height);
+    gif.addFrame(off, {copy:true, delay: prebuiltDelays});
+  }
+  preloadOverlay.classList.add('open');
+  preloadText.textContent = 'Encoding GIF… this may take a moment';
+  preloadProgress.value = 0;
+
+  gif.on('progress', p => { preloadProgress.value = Math.round(p*100); });
+  gif.on('finished', (blob)=>{
+    preloadOverlay.classList.remove('open');
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), {href:url, download:`animation_${new Date().toISOString().slice(0,10)}.gif`});
+    a.click(); setTimeout(()=>URL.revokeObjectURL(url), 5000);
+  });
+  gif.render();
+}
+
+/* Hook up Prebuild/GIF controls */
+$('#animPrebuild').addEventListener('click', prebuildAnimation);
+$('#animDownloadGIF').addEventListener('click', downloadGIF);
+
+/* Canvas visibility during prebuilt playback */
 document.addEventListener('keydown', (e)=>{
-  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-  if (activeTab !== 'tab-animate') return;
-  if (e.code==='Space'){ e.preventDefault(); if (animTimer) pause(); else play(); }
-  if (e.key==='ArrowRight'){ e.preventDefault(); $('#animStepFwd').click(); }
-  if (e.key==='ArrowLeft'){ e.preventDefault(); $('#animStepBack').click(); }
-  if (e.key==='Home'){ e.preventDefault(); pause(); applyFrame(0); }
-  if (e.key==='End'){ e.preventDefault(); pause(); if (animFrames.length) applyFrame(animFrames.length-1); }
+  if (document.querySelector('.tab-btn.active')?.dataset.tab !== 'tab-animate') return;
+  if (e.code==='Space'){
+    e.preventDefault();
+    if (prebuiltPlaying) pausePrebuilt(); else playPrebuilt();
+  }
 });
+$('#animPlay').addEventListener('click', ()=>{ /* live mode already handled above */ });
+$('#animPause').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
+$('#animStepFwd').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
+$('#animStepBack').addEventListener('click', ()=>{ pause(); pausePrebuilt(); });
 
 /* ==========================
-   Learn Drawer + Modal (z-index fix applied in CSS)
+   Learn Drawer + Modal (now guaranteed above map)
    ========================== */
 const LEARN_HTML = `
 <div class="learn-section" id="sec-sat">
@@ -759,9 +902,9 @@ const LEARN_HTML = `
     <li><b>Infrared (IR)</b>: thermal; night/day; cloud-top temp, hot spots.</li>
     <li><b>Fires/Hotspots</b>: active fire detections.</li>
     <li><b>Snow & Ice</b>: snow cover, sea ice concentration/extent.</li>
-    <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone — haze & pollution.</li>
+    <li><b>Aerosol/Atmosphere</b>: AOD, SO₂, NO₂, ozone.</li>
     <li><b>Night Lights</b>: nighttime lights (DNB).</li>
-    <li><b>Ocean/SST/Color</b>: sea surface temperature, chlorophyll.</li>
+    <li><b>Ocean/SST/Color</b>: SST, chlorophyll.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tools">
@@ -769,20 +912,19 @@ const LEARN_HTML = `
   <ul>
     <li><b>Explore</b>: build a multi-layer view; per-layer date/opacity; reorder layers.</li>
     <li><b>Compare</b>: swipe left/right dates/layers to see change.</li>
-    <li><b>Animate</b>: time-lapse between start→end with step units.</li>
+    <li><b>Animate</b>: live (quick) or prebuilt (smooth/GIF).</li>
     <li><b>Analyze</b>: draw AOIs; export/import GeoJSON; snapshot.</li>
   </ul>
 </div>
 <div class="learn-section" id="sec-tips">
   <h4>Tips & Caveats</h4>
   <ul>
-    <li>Not all layers have data every day; step a day if tiles fail.</li>
-    <li>Legends vary by layer; click “Legend” in stack items.</li>
-    <li>Stacks: place True Color at bottom, thematic overlays above.</li>
+    <li>Some products are daily only; sub-daily steps may repeat frames.</li>
+    <li>Prebuild uses current viewport; zoom/pan before building.</li>
+    <li>Stacks: True Color base + themed overlays for clarity.</li>
   </ul>
 </div>
 `;
-
 function renderLearnTargets(){
   $('#learnContent').innerHTML = LEARN_HTML;
   $('#learnModalContent').innerHTML = LEARN_HTML;
@@ -800,19 +942,16 @@ $('#openLearn').addEventListener('click', ()=>toggleLearn());
 $('#closeLearn').addEventListener('click', ()=>toggleLearn(false));
 document.addEventListener('keydown', (e)=>{ if (e.key==='?' && !e.ctrlKey && !e.metaKey) toggleLearn(); if (e.key==='Escape') toggleLearn(false); });
 
-// Modal (z-index fixed via CSS)
 $('#openLearnModal').addEventListener('click', ()=>$('#learnModal').classList.add('open'));
 $('#closeLearnModal').addEventListener('click', ()=>$('#learnModal').classList.remove('open'));
 $('#learnModal').addEventListener('click', (e)=>{ if (e.target.id==='learnModal') $('#learnModal').classList.remove('open'); });
 
-// Learn search (filter sections)
 $('#learnSearch').addEventListener('input', ()=>{
   const q = $('#learnSearch').value.toLowerCase();
   document.querySelectorAll('.learn-section').forEach(sec=>{
     sec.style.display = sec.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
-// Restore drawer state
 if (localStorage.getItem('learnOpen')==='1') toggleLearn(true);
 
 /* ==========================
@@ -839,7 +978,7 @@ $('#snapshotBtn').addEventListener('click', snapshot);
 $('#snapshotBtn2').addEventListener('click', snapshot);
 
 /* ==========================
-   Bookmarks (center/zoom + tab)
+   Bookmarks
    ========================== */
 const BM_KEY='oeo_bookmarks_v3';
 function loadBMs(){
@@ -878,6 +1017,8 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
    Init
    ========================== */
 populateCatalog();
+
+/* ============== END ============== */
 </script>
 </body>
 </html>
